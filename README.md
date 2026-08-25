@@ -27,25 +27,29 @@ Contributors also need Rust 1.94.1. Application builds do not compile Rust after
 
 ## Install
 
-The stable Maven coordinate will be:
+Add Kestara WebRTC from Maven Central.
 
-```kotlin
-implementation("com.enderdash:kestara-webrtc:0.1.0")
-```
-
-No public release exists yet. Development snapshots are available from JitPack after a successful build:
+### Gradle
 
 ```kotlin
 repositories {
-    maven("https://jitpack.io")
+    mavenCentral()
 }
 
 dependencies {
-    implementation("com.github.enderdash-com:kestara-webrtc:main-SNAPSHOT")
+    implementation("com.enderdash:kestara-webrtc:0.1.0")
 }
 ```
 
-Use a commit hash instead of `main-SNAPSHOT` when a build must be reproducible. JitPack builds contain the native library for its build platform.
+### Maven
+
+```xml
+<dependency>
+    <groupId>com.enderdash</groupId>
+    <artifactId>kestara-webrtc</artifactId>
+    <version>0.1.0</version>
+</dependency>
+```
 
 Maven Central releases contain native libraries for Linux, macOS, and Windows. Each release supports `x86_64` and `aarch64` systems.
 

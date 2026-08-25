@@ -1,9 +1,0 @@
-jdk:
-  - openjdk17
-
-before_install:
-  - curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain 1.94.1
-  - $HOME/.cargo/bin/rustup component add clippy rustfmt --toolchain 1.94.1
-
-install:
-  - export PATH="$HOME/.cargo/bin:$PATH" && ./gradlew clean build publishToMavenLocal
