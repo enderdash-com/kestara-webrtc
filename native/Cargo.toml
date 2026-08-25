@@ -17,10 +17,10 @@ bytes = "1.12.0"
 crossbeam-channel = "0.5.15"
 jni = "0.22.4"
 rcgen = "0.14.9"
-rtc = { version = "0.20.3", features = ["pem"] }
-ice = { package = "rtc-ice", version = "0.20.3" }
+rtc = { git = "https://github.com/enderdash-com/rtc.git", rev = "81a8ba796d058daa07771eb9160ad411724c3cbe", features = ["pem"] }
+ice = { package = "rtc-ice", git = "https://github.com/enderdash-com/rtc.git", rev = "81a8ba796d058daa07771eb9160ad411724c3cbe" }
 tokio = { version = "1.52.0", features = ["rt-multi-thread", "time"] }
-webrtc = { git = "https://github.com/enderdash-com/webrtc.git", rev = "e74661e71b8f0b1e981e7541282633a37a644202" }
+webrtc = { git = "https://github.com/enderdash-com/webrtc.git", rev = "18bf3d45cb284d1b18971de757874da51e075096" }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

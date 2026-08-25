@@ -5,14 +5,14 @@ use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
-use bytes::BytesMut;
+use bytes::Bytes;
 use crossbeam_channel::Sender;
 use ice::mdns::MulticastDnsMode;
 use ice::network_type::NetworkType;
 use rtc::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use rtc::peer_connection::transport::RTCDtlsRole;
 use rtc::statistics::stats::ice_candidate::RTCIceCandidateStats;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 use tokio::task::JoinSet;
 use webrtc::data_channel::{
     DataChannel, DataChannelEvent, RTCDataChannelInit, RTCDataChannelState,
@@ -31,7 +31,8 @@ use webrtc::runtime::{Runtime, TokioRuntime};
 use crate::events::{
     DATA_CHANNEL, DATA_CHANNEL_BINARY, DATA_CHANNEL_CLOSED, DATA_CHANNEL_CLOSING,
     DATA_CHANNEL_ERROR, DATA_CHANNEL_OPEN, DATA_CHANNEL_TEXT, ICE_CONNECTION_STATE,
-    ICE_GATHERING_STATE, LOCAL_CANDIDATE, NativeEvent, PEER_STATE,
+    ICE_GATHERING_STATE, LOCAL_CANDIDATE, NEGOTIATION_NEEDED, NativeEvent, PEER_STATE,
+    SIGNALING_STATE,
 };
 
 #[derive(Debug)]
@@ -90,6 +91,7 @@ pub struct SctpConfiguration {
     pub send_buffer_limit: usize,
     pub receive_buffer_size: u32,
     pub maximum_message_size: u32,
+    pub receive_queue_capacity: usize,
 }
 
 #[derive(Debug)]
@@ -105,6 +107,7 @@ pub struct DataChannelConfiguration {
 struct PeerEntry {
     peer: Arc<dyn NativePeerConnection>,
     operations: Arc<AsyncMutex<()>>,
+    receive_queue_capacity: usize,
 }
 
 struct ChannelEntry {
@@ -197,7 +200,8 @@ impl RuntimeState {
                 .with_udp_addrs(udp_addresses)
                 .with_tcp_addrs(tcp_addresses)
                 .with_dedicated_reactor_thread(true)
-                .with_data_channel_send_buffer_limit(configuration.sctp.send_buffer_limit);
+                .with_data_channel_send_buffer_limit(configuration.sctp.send_buffer_limit)
+                .with_data_channel_event_channel_capacity(1);
             if let Some(socket_mux) = &self.socket_mux {
                 builder = builder.with_socket_mux(Arc::clone(socket_mux));
             }
@@ -236,6 +240,7 @@ impl RuntimeState {
             PeerEntry {
                 peer,
                 operations: Arc::new(AsyncMutex::new(())),
+                receive_queue_capacity: configuration.sctp.receive_queue_capacity,
             },
         );
         Ok(handle)
@@ -336,7 +341,7 @@ impl RuntimeState {
         self: &Arc<Self>,
         peer_handle: u64,
         configuration: DataChannelConfiguration,
-    ) -> Result<u64, String> {
+    ) -> Result<(u64, u16), String> {
         let peer = self.get_peer(peer_handle)?;
         let _operation = peer.operations.lock().await;
         let label = configuration.label;
@@ -352,7 +357,9 @@ impl RuntimeState {
             .create_data_channel(&label, Some(options))
             .await
             .map_err(|error| format!("Failed to create DataChannel: {error}"))?;
-        self.register_channel(peer_handle, channel, false).await
+        let id = channel.id();
+        let handle = self.register_channel(peer_handle, channel, false).await?;
+        Ok((handle, id))
     }
 
     pub async fn send_text(&self, channel_handle: u64, text: String) -> Result<(), String> {
@@ -369,8 +376,11 @@ impl RuntimeState {
         let (channel, peer_handle) = self.get_channel(channel_handle)?;
         let peer = self.get_peer(peer_handle)?;
         let _operation = peer.operations.lock().await;
+        let data = Bytes::from(data)
+            .try_into_mut()
+            .expect("a newly created Bytes value is uniquely owned");
         channel
-            .send(BytesMut::from(data.as_slice()))
+            .send(data)
             .await
             .map_err(|error| format!("Failed to send DataChannel data: {error}"))
     }
@@ -390,7 +400,10 @@ impl RuntimeState {
         data: Vec<u8>,
     ) -> Result<bool, String> {
         let (channel, _) = self.get_channel(channel_handle)?;
-        match channel.try_send(BytesMut::from(data.as_slice())).await {
+        let data = Bytes::from(data)
+            .try_into_mut()
+            .expect("a newly created Bytes value is uniquely owned");
+        match channel.try_send(data).await {
             Ok(()) => Ok(true),
             Err(Error::ErrSendBufferFull) => Ok(false),
             Err(error) => Err(format!("Failed to send DataChannel data: {error}")),
@@ -505,6 +518,10 @@ impl RuntimeState {
         let label = channel.label().await.unwrap_or_default();
         let protocol = channel.protocol().await.unwrap_or_default();
         let ordered = channel.ordered().await.unwrap_or(true);
+        let id = channel.id();
+        let negotiated = channel.negotiated().await.unwrap_or(false);
+        let max_packet_life_time = channel.max_packet_life_time().await.unwrap_or(None);
+        let max_retransmits = channel.max_retransmits().await.unwrap_or(None);
         let open = channel
             .ready_state()
             .await
@@ -526,16 +543,24 @@ impl RuntimeState {
                 operation_handle: 0,
                 text: Some(label),
                 secondary_text: Some(protocol),
-                number: i32::from(ordered) | (i32::from(open) << 1),
-                data: None,
+                number: i32::from(ordered) | (i32::from(open) << 1) | (i32::from(id) << 2),
+                data: Some(channel_metadata(
+                    negotiated,
+                    max_packet_life_time,
+                    max_retransmits,
+                )),
+                delivery_permit: None,
             });
         }
+
+        let receive_queue_capacity = self.get_peer(peer_handle)?.receive_queue_capacity;
 
         tokio::spawn(poll_data_channel(
             Arc::downgrade(self),
             peer_handle,
             handle,
             channel,
+            Arc::new(Semaphore::new(receive_queue_capacity)),
         ));
         Ok(handle)
     }
@@ -549,6 +574,7 @@ impl RuntimeState {
         Ok(PeerOperation {
             peer: Arc::clone(&entry.peer),
             operations: Arc::clone(&entry.operations),
+            receive_queue_capacity: entry.receive_queue_capacity,
         })
     }
 
@@ -575,6 +601,7 @@ impl RuntimeState {
 struct PeerOperation {
     peer: Arc<dyn NativePeerConnection>,
     operations: Arc<AsyncMutex<()>>,
+    receive_queue_capacity: usize,
 }
 
 struct EventHandler {
@@ -600,6 +627,7 @@ impl PeerConnectionEventHandler for EventHandler {
             secondary_text: candidate.sdp_mid,
             number: candidate.sdp_mline_index.map_or(-1, i32::from),
             data: None,
+            delivery_permit: None,
         });
     }
 
@@ -642,6 +670,25 @@ impl PeerConnectionEventHandler for EventHandler {
             let _ = runtime.register_channel(peer_handle, channel, true).await;
         });
     }
+
+    async fn on_negotiation_needed(&self) {
+        if let Some(runtime) = self.runtime.upgrade() {
+            runtime.send_event(NativeEvent::peer(NEGOTIATION_NEEDED, self.peer_handle, 0));
+        }
+    }
+
+    async fn on_signaling_state_change(
+        &self,
+        state: rtc::peer_connection::state::RTCSignalingState,
+    ) {
+        if let Some(runtime) = self.runtime.upgrade() {
+            runtime.send_event(NativeEvent::peer(
+                SIGNALING_STATE,
+                self.peer_handle,
+                state as i32,
+            ));
+        }
+    }
 }
 
 async fn poll_data_channel(
@@ -649,6 +696,7 @@ async fn poll_data_channel(
     peer_handle: u64,
     channel_handle: u64,
     channel: Arc<dyn DataChannel>,
+    delivery_slots: Arc<Semaphore>,
 ) {
     while let Some(event) = channel.poll().await {
         let Some(runtime) = runtime.upgrade() else {
@@ -678,16 +726,26 @@ async fn poll_data_channel(
                 break;
             }
             DataChannelEvent::OnMessage(message) if message.is_string => {
+                let Ok(delivery_permit) = Arc::clone(&delivery_slots).acquire_owned().await else {
+                    return;
+                };
                 let text = String::from_utf8_lossy(&message.data).into_owned();
                 runtime.send_event(NativeEvent {
                     text: Some(text),
+                    delivery_permit: Some(delivery_permit),
                     ..NativeEvent::channel(DATA_CHANNEL_TEXT, peer_handle, channel_handle)
                 });
             }
-            DataChannelEvent::OnMessage(message) => runtime.send_event(NativeEvent {
-                data: Some(message.data.to_vec()),
-                ..NativeEvent::channel(DATA_CHANNEL_BINARY, peer_handle, channel_handle)
-            }),
+            DataChannelEvent::OnMessage(message) => {
+                let Ok(delivery_permit) = Arc::clone(&delivery_slots).acquire_owned().await else {
+                    return;
+                };
+                runtime.send_event(NativeEvent {
+                    data: Some(message.data.into()),
+                    delivery_permit: Some(delivery_permit),
+                    ..NativeEvent::channel(DATA_CHANNEL_BINARY, peer_handle, channel_handle)
+                });
+            }
             DataChannelEvent::OnBufferedAmountLow => runtime.send_event(NativeEvent::channel(
                 crate::events::DATA_CHANNEL_BUFFERED_AMOUNT_LOW,
                 peer_handle,
@@ -705,6 +763,18 @@ async fn poll_data_channel(
     {
         registry.channels.remove(&channel_handle);
     }
+}
+
+fn channel_metadata(
+    negotiated: bool,
+    max_packet_life_time: Option<u16>,
+    max_retransmits: Option<u16>,
+) -> Vec<u8> {
+    let mut data = Vec::with_capacity(9);
+    data.push(u8::from(negotiated));
+    data.extend_from_slice(&max_packet_life_time.map_or(-1, i32::from).to_le_bytes());
+    data.extend_from_slice(&max_retransmits.map_or(-1, i32::from).to_le_bytes());
+    data
 }
 
 fn bind_addresses(

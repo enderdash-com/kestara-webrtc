@@ -163,6 +163,7 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
     sctp_send_buffer_limit: jint,
     sctp_receive_buffer_size: jint,
     sctp_maximum_message_size: jint,
+    data_channel_receive_queue_capacity: jint,
     dtls_answering_role: jint,
     media_level_fingerprints: jboolean,
     dtls_replay_protection_window: jint,
@@ -219,6 +220,13 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                     positive_u32(sctp_receive_buffer_size, "SCTP receive buffer size")?;
                 let sctp_maximum_message_size =
                     positive_u32(sctp_maximum_message_size, "SCTP maximum message size")?;
+                let receive_queue_capacity = usize::try_from(data_channel_receive_queue_capacity)
+                    .map_err(|_| {
+                    "DataChannel receive queue capacity must be positive".to_owned()
+                })?;
+                if receive_queue_capacity == 0 {
+                    return Err("DataChannel receive queue capacity must be positive".to_owned());
+                }
                 if sctp_maximum_message_size > 256 * 1024 {
                     return Err("SCTP maximum message size must not exceed 262144".to_owned());
                 }
@@ -349,6 +357,7 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                                     })?,
                                 receive_buffer_size: sctp_receive_buffer_size,
                                 maximum_message_size: sctp_maximum_message_size,
+                                receive_queue_capacity,
                             },
                             dtls: DtlsConfiguration {
                                 answering_role,
@@ -639,6 +648,114 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                         timeout: timeout(timeout_millis)?,
                         channel_handle: handle_from_jlong(channel_handle)?,
                         text,
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeAllocateBuffer(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    capacity: jint,
+) -> jobject {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<jobject> {
+            let result = (|| {
+                let runtime_handle = handle_from_jlong(runtime_handle)?;
+                let capacity = usize::try_from(capacity)
+                    .map_err(|_| "Native buffer capacity must not be negative".to_owned())?;
+                if capacity > 256 * 1024 {
+                    return Err("Native buffer capacity must not exceed 262144 bytes".to_owned());
+                }
+                runtime::allocate_buffer(runtime_handle, capacity)
+            })();
+            let view = operation_result(env, result)?;
+            // The allocation is retained in the runtime registry until Java transfers or closes
+            // the descriptor, so the address remains valid for the direct buffer's lifetime.
+            let buffer = unsafe { env.new_direct_byte_buffer(view.address, view.length)? };
+            let buffer_object = JObject::from(buffer);
+            let descriptor = env.new_object(
+                jni_str!("com/enderdash/kestara/webrtc/internal/NativeBufferDescriptor"),
+                jni_sig!("(JLjava/nio/ByteBuffer;)V"),
+                &[
+                    JValue::Long(handle_to_jlong(view.handle).unwrap_or_default()),
+                    JValue::Object(&buffer_object),
+                ],
+            )?;
+            Ok(descriptor.into_raw())
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeReleaseBuffer(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    buffer_handle: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let result = (|| {
+                runtime::release_buffer(
+                    handle_from_jlong(runtime_handle)?,
+                    handle_from_jlong(buffer_handle)?,
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitSendDataChannelBuffer(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    channel_handle: jlong,
+    buffer_handle: jlong,
+    offset: jint,
+    length: jint,
+    try_send: jboolean,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let result = (|| {
+                let runtime_handle = handle_from_jlong(runtime_handle)?;
+                let data = runtime::take_buffer(
+                    runtime_handle,
+                    handle_from_jlong(buffer_handle)?,
+                    usize::try_from(offset)
+                        .map_err(|_| "Native buffer offset must not be negative".to_owned())?,
+                    usize::try_from(length)
+                        .map_err(|_| "Native buffer length must not be negative".to_owned())?,
+                )?;
+                let operation_handle = handle_from_jlong(operation_handle)?;
+                let channel_handle = handle_from_jlong(channel_handle)?;
+                let timeout = timeout(timeout_millis)?;
+                runtime::submit(
+                    runtime_handle,
+                    if try_send {
+                        Command::TrySendBinary {
+                            operation_handle,
+                            timeout,
+                            channel_handle,
+                            data,
+                        }
+                    } else {
+                        Command::SendBinary {
+                            operation_handle,
+                            timeout,
+                            channel_handle,
+                            data,
+                        }
                     },
                 )
             })();
@@ -958,18 +1075,34 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
         .with_env(|env| -> jni::errors::Result<jobject> {
             let result = handle_from_jlong(runtime_handle)
                 .and_then(|runtime_handle| runtime::poll(runtime_handle, timeout(timeout_millis)?));
-            let Some(event) = operation_result(env, result)? else {
+            let Some(mut event) = operation_result(env, result)? else {
                 return Ok(std::ptr::null_mut());
             };
-            let text = optional_java_string(env, event.text)?;
-            let secondary_text = optional_java_string(env, event.secondary_text)?;
+            let text = optional_java_string(env, event.text.take())?;
+            let secondary_text = optional_java_string(env, event.secondary_text.take())?;
+            let mut message_handle = 0;
+            let mut direct_data = JObject::null();
+            if let Some(permit) = event.delivery_permit.take() {
+                let view = operation_result(
+                    env,
+                    handle_from_jlong(runtime_handle).and_then(|runtime_handle| {
+                        runtime::register_delivery_buffer(runtime_handle, event.data.take(), permit)
+                    }),
+                )?;
+                message_handle = handle_to_jlong(view.handle).unwrap_or_default();
+                if event.kind == crate::events::DATA_CHANNEL_BINARY {
+                    // The runtime registry owns the allocation until Java closes the message.
+                    let buffer = unsafe { env.new_direct_byte_buffer(view.address, view.length)? };
+                    direct_data = JObject::from(buffer);
+                }
+            }
             let data = match event.data {
                 Some(data) => JObject::from(env.byte_array_from_slice(&data)?),
                 None => JObject::null(),
             };
             let object = env.new_object(
                 jni_str!("com/enderdash/kestara/webrtc/internal/NativeEvent"),
-                jni_sig!("(IJJJLjava/lang/String;Ljava/lang/String;I[B)V"),
+                jni_sig!("(IJJJLjava/lang/String;Ljava/lang/String;I[BJLjava/nio/ByteBuffer;)V"),
                 &[
                     JValue::Int(event.kind),
                     JValue::Long(handle_to_jlong(event.peer_handle).unwrap_or_default()),
@@ -979,6 +1112,8 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                     JValue::Object(&secondary_text),
                     JValue::Int(event.number),
                     JValue::Object(&data),
+                    JValue::Long(message_handle),
+                    JValue::Object(&direct_data),
                 ],
             )?;
             Ok(object.into_raw())

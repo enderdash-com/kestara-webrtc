@@ -1480,8 +1480,7 @@ dependencies = [
 [[package]]
 name = "rtc"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e55da8e478486106f04db1ccba177ae3260fb12899982cd5cddf2ac0e1cdcfe9"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
  "hex",
@@ -1516,8 +1515,7 @@ dependencies = [
 [[package]]
 name = "rtc-datachannel"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bef39b017b5cf0a3511eab456505556b320e0aa04d4547b015ecba9f844fe43"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
  "log",
@@ -1529,8 +1527,7 @@ dependencies = [
 [[package]]
 name = "rtc-dtls"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03a1be8a58a72a257c233ad9a2f92130c15994e02f7a1981379fdebbe0d8761a"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "aes",
  "bytecheck",
@@ -1563,8 +1560,7 @@ dependencies = [
 [[package]]
 name = "rtc-ice"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "640c7ecb9a09d21c0d4ba27b3ff22adb07cce90d23a7bce7c82bcbe424844e31"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
  "crc",
@@ -1582,8 +1578,7 @@ dependencies = [
 [[package]]
 name = "rtc-interceptor"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9436633af4a6beff6fee08c99464012017fcd1e0a4c0559b1f0d733e8812217a"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "log",
  "rand",
@@ -1597,8 +1592,7 @@ dependencies = [
 [[package]]
 name = "rtc-interceptor-derive"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3563dafffb11e99264cbfa87c45d806c349c701a96ea3cf3c4778ae3c5da63b4"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1608,8 +1602,7 @@ dependencies = [
 [[package]]
 name = "rtc-mdns"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4db343dbcd1445783ac9f832e350775e4e655b2c890bead7d13dca1219e0ac5"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
  "log",
@@ -1621,8 +1614,7 @@ dependencies = [
 [[package]]
 name = "rtc-media"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "709a571ed5d88854f3f8c0b92e4a445d77ee54fd33dd45f9297a3d91e3e96d67"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "byteorder",
  "bytes",
@@ -1635,8 +1627,7 @@ dependencies = [
 [[package]]
 name = "rtc-rtcp"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8817201df4a87008528804073d2dddfefd08eecb44afe6f6d61f7fb1beed72d0"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
  "rtc-shared",
@@ -1645,8 +1636,7 @@ dependencies = [
 [[package]]
 name = "rtc-rtp"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2aa84012c4a3d855586878e9f891af5062bd5690278b2c54bfcfb0a0ddd9098"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
  "memchr",
@@ -1658,8 +1648,7 @@ dependencies = [
 [[package]]
 name = "rtc-sctp"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "78317cf685b6cde3dbd1cd8e7c9f373e74f00dce00000a25c14c6ddb3378da86"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
  "crc32c",
@@ -1674,8 +1663,7 @@ dependencies = [
 [[package]]
 name = "rtc-sdp"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54ab04410496c8ea47350490298fb135f5432f8fa1aa88edf5dadc81c855a324"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "rand",
  "rtc-shared",
@@ -1685,8 +1673,7 @@ dependencies = [
 [[package]]
 name = "rtc-shared"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dae32667b8c9f15223172ce27471e02791e2b401de559b3ea02a6ec93ff280e0"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -1707,8 +1694,7 @@ dependencies = [
 [[package]]
 name = "rtc-srtp"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413d48daef797c98c12ff91988abac36d44c81974f0a4b0658549174230819cd"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "aes",
  "byteorder",
@@ -1726,8 +1712,7 @@ dependencies = [
 [[package]]
 name = "rtc-stun"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4b4540b2b8ff7155ef9e95a3b492a7830e974e2fa9ce4b76ec315c4a6b4953d"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "base64",
  "bytes",
@@ -1745,8 +1730,7 @@ dependencies = [
 [[package]]
 name = "rtc-turn"
 version = "0.20.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "449365ff0b87488d5f9532409813e76e1f0f5965ef31ce6fcde9aa786c852c6c"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
  "log",
@@ -2279,7 +2263,7 @@ dependencies = [
 [[package]]
 name = "webrtc"
 version = "0.20.3"
-source = "git+https://github.com/enderdash-com/webrtc.git?rev=e74661e71b8f0b1e981e7541282633a37a644202#e74661e71b8f0b1e981e7541282633a37a644202"
+source = "git+https://github.com/enderdash-com/webrtc.git?rev=18bf3d45cb284d1b18971de757874da51e075096#18bf3d45cb284d1b18971de757874da51e075096"
 dependencies = [
  "async-broadcast",
  "async-channel",

@@ -8,6 +8,7 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
 use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
 use tokio::runtime::{Builder, Runtime};
+use tokio::sync::OwnedSemaphorePermit;
 use tokio::task::JoinHandle;
 use webrtc::peer_connection::{
     RTCCertificate, RTCIceCandidateInit, RTCIceServer, RTCSessionDescription, SharedSocketMux,
@@ -230,11 +231,25 @@ struct RuntimeController {
     event_sender: Sender<NativeEvent>,
     thread: Mutex<Option<ThreadJoinHandle<()>>>,
     certificate: Arc<Mutex<RTCCertificate>>,
+    buffers: Mutex<HashMap<u64, NativeBufferEntry>>,
+}
+
+struct NativeBufferEntry {
+    data: Vec<u8>,
+    _delivery_permit: Option<OwnedSemaphorePermit>,
+}
+
+#[derive(Default)]
+pub struct NativeBufferView {
+    pub handle: u64,
+    pub address: *mut u8,
+    pub length: usize,
 }
 
 static RUNTIMES: LazyLock<Mutex<HashMap<u64, Arc<RuntimeController>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static NEXT_RUNTIME_HANDLE: AtomicU64 = AtomicU64::new(1);
+static NEXT_BUFFER_HANDLE: AtomicU64 = AtomicU64::new(1);
 
 pub struct RuntimeConfiguration {
     pub worker_threads: usize,
@@ -320,6 +335,7 @@ pub fn create(configuration: RuntimeConfiguration) -> Result<u64, String> {
         event_sender,
         thread: Mutex::new(Some(thread)),
         certificate,
+        buffers: Mutex::new(HashMap::new()),
     });
     lock_runtimes()?.insert(runtime_handle, controller);
     Ok(runtime_handle)
@@ -335,6 +351,79 @@ pub fn certificate_pem(runtime_handle: u64) -> Result<String, String> {
     let controller = get_runtime(runtime_handle)?;
     let certificate = lock_certificate(&controller.certificate)?;
     Ok(certificate.serialize_pem())
+}
+
+pub fn allocate_buffer(runtime_handle: u64, capacity: usize) -> Result<NativeBufferView, String> {
+    register_buffer(runtime_handle, vec![0; capacity], None)
+}
+
+pub fn register_delivery_buffer(
+    runtime_handle: u64,
+    data: Option<Vec<u8>>,
+    permit: OwnedSemaphorePermit,
+) -> Result<NativeBufferView, String> {
+    register_buffer(runtime_handle, data.unwrap_or_default(), Some(permit))
+}
+
+pub fn release_buffer(runtime_handle: u64, buffer_handle: u64) -> Result<(), String> {
+    let controller = get_runtime(runtime_handle)?;
+    controller
+        .buffers
+        .lock()
+        .map_err(|_| "The native buffer registry is poisoned".to_owned())?
+        .remove(&buffer_handle);
+    Ok(())
+}
+
+pub fn take_buffer(
+    runtime_handle: u64,
+    buffer_handle: u64,
+    offset: usize,
+    length: usize,
+) -> Result<Vec<u8>, String> {
+    let controller = get_runtime(runtime_handle)?;
+    let mut entry = controller
+        .buffers
+        .lock()
+        .map_err(|_| "The native buffer registry is poisoned".to_owned())?
+        .remove(&buffer_handle)
+        .ok_or_else(|| format!("Unknown or consumed native buffer: {buffer_handle}"))?;
+    let end = offset
+        .checked_add(length)
+        .filter(|end| *end <= entry.data.len())
+        .ok_or_else(|| "Native buffer slice is outside its allocation".to_owned())?;
+    if offset != 0 && length != 0 {
+        entry.data.copy_within(offset..end, 0);
+    }
+    entry.data.truncate(length);
+    Ok(entry.data)
+}
+
+fn register_buffer(
+    runtime_handle: u64,
+    mut data: Vec<u8>,
+    delivery_permit: Option<OwnedSemaphorePermit>,
+) -> Result<NativeBufferView, String> {
+    let controller = get_runtime(runtime_handle)?;
+    let handle = NEXT_BUFFER_HANDLE.fetch_add(1, Ordering::Relaxed);
+    let address = data.as_mut_ptr();
+    let length = data.len();
+    controller
+        .buffers
+        .lock()
+        .map_err(|_| "The native buffer registry is poisoned".to_owned())?
+        .insert(
+            handle,
+            NativeBufferEntry {
+                data,
+                _delivery_permit: delivery_permit,
+            },
+        );
+    Ok(NativeBufferView {
+        handle,
+        address,
+        length,
+    })
 }
 
 pub fn submit(runtime_handle: u64, command: Command) -> Result<(), String> {
@@ -647,11 +736,12 @@ async fn execute(state: Arc<RuntimeState>, command: Command) -> Result<Operation
             configuration,
             ..
         } => {
-            let channel_handle = state
+            let (channel_handle, channel_id) = state
                 .create_data_channel(peer_handle, configuration)
                 .await?;
             Ok(OperationValue {
                 channel_handle,
+                text: Some(channel_id.to_string()),
                 ..OperationValue::default()
             })
         }

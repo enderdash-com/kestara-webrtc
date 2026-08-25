@@ -1,6 +1,7 @@
 package com.enderdash.kestara.webrtc;
 
 import com.enderdash.kestara.webrtc.internal.NativeBindings;
+import com.enderdash.kestara.webrtc.internal.NativeBufferDescriptor;
 import com.enderdash.kestara.webrtc.internal.NativeEvent;
 import java.util.ArrayList;
 import java.util.List;
@@ -94,6 +95,28 @@ public final class WebRtcRuntime implements AutoCloseable {
      */
     public WebRtcRuntimeOptions options() {
         return options;
+    }
+
+    /**
+     * Allocates native-owned storage and returns a mutable direct view.
+     *
+     * @param capacity the allocation size in bytes
+     * @return the owned native buffer
+     */
+    public NativeBuffer allocateBuffer(int capacity) {
+        if (capacity < 0 || capacity > 256 * 1024) {
+            throw new IllegalArgumentException(
+                    "Native buffer capacity must be between 0 and 262144 bytes");
+        }
+        synchronized (lifecycleLock) {
+            if (closing || closed) {
+                throw new IllegalStateException("WebRtcRuntime is closed");
+            }
+            NativeBufferDescriptor descriptor = Objects.requireNonNull(
+                    NativeBindings.nativeAllocateBuffer(handle, capacity),
+                    "Native buffer descriptor");
+            return new NativeBuffer(this, descriptor);
+        }
     }
 
     /**
@@ -213,6 +236,7 @@ public final class WebRtcRuntime implements AutoCloseable {
                         sctp.sendBufferLimit(),
                         sctp.receiveBufferSize(),
                         sctp.maximumMessageSize(),
+                        sctp.receiveQueueCapacity(),
                         dtls.answeringRole().ordinal(),
                         dtls.mediaLevelFingerprints(),
                         dtls.replayProtectionWindow(),
@@ -340,10 +364,12 @@ public final class WebRtcRuntime implements AutoCloseable {
                         timeoutMillis));
     }
 
-    CompletionStage<Long> createDataChannelAsync(
+    CompletionStage<ChannelRegistration> createDataChannelAsync(
             long peer, String label, DataChannelOptions channelOptions, long timeoutMillis) {
         return submit(
-                NativeEvent::channelHandle,
+                event -> new ChannelRegistration(
+                        event.channelHandle(),
+                        Integer.parseUnsignedInt(Objects.requireNonNull(event.text(), "DataChannel ID"))),
                 operation -> NativeBindings.nativeSubmitCreateDataChannel(
                         handle,
                         operation,
@@ -383,6 +409,42 @@ public final class WebRtcRuntime implements AutoCloseable {
                 event -> Boolean.parseBoolean(event.text()),
                 operation -> NativeBindings.nativeSubmitTrySendDataChannelBinary(
                         handle, operation, channel, data, timeoutMillis));
+    }
+
+    CompletionStage<Void> sendBufferAsync(
+            long channel, NativeBuffer buffer, long timeoutMillis) {
+        NativeBuffer.Transfer transfer = buffer.transfer(this);
+        CompletionStage<Void> stage = submit(
+                ignored -> null,
+                operation -> NativeBindings.nativeSubmitSendDataChannelBuffer(
+                        handle,
+                        operation,
+                        channel,
+                        transfer.handle(),
+                        transfer.offset(),
+                        transfer.length(),
+                        false,
+                        timeoutMillis));
+        releaseRejectedTransfer(stage, transfer.handle());
+        return stage;
+    }
+
+    CompletionStage<Boolean> trySendBufferAsync(
+            long channel, NativeBuffer buffer, long timeoutMillis) {
+        NativeBuffer.Transfer transfer = buffer.transfer(this);
+        CompletionStage<Boolean> stage = submit(
+                event -> Boolean.parseBoolean(event.text()),
+                operation -> NativeBindings.nativeSubmitSendDataChannelBuffer(
+                        handle,
+                        operation,
+                        channel,
+                        transfer.handle(),
+                        transfer.offset(),
+                        transfer.length(),
+                        true,
+                        timeoutMillis));
+        releaseRejectedTransfer(stage, transfer.handle());
+        return stage;
     }
 
     CompletionStage<Void> dataChannelWritableAsync(long channel, long timeoutMillis) {
@@ -430,6 +492,22 @@ public final class WebRtcRuntime implements AutoCloseable {
 
     void unregisterPeer(long peer, PeerConnection connection) {
         peers.remove(peer, connection);
+    }
+
+    void releaseBuffer(long buffer) {
+        if (!closed) {
+            NativeBindings.nativeReleaseBuffer(handle, buffer);
+        }
+    }
+
+    boolean isClosed() {
+        return closed;
+    }
+
+    private void releaseRejectedTransfer(CompletionStage<?> stage, long buffer) {
+        if (stage.toCompletableFuture().isCompletedExceptionally()) {
+            releaseBuffer(buffer);
+        }
     }
 
     <T> T await(CompletionStage<T> stage, long timeoutMillis) {
@@ -613,6 +691,8 @@ public final class WebRtcRuntime implements AutoCloseable {
             }
         }
     }
+
+    record ChannelRegistration(long handle, int id) {}
 
     private record NativeConfiguration(String[] urls, String[] usernames, String[] credentials) {
         private static NativeConfiguration from(PeerConnectionConfiguration configuration) {

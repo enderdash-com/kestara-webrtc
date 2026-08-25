@@ -1,6 +1,7 @@
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
+use tokio::sync::OwnedSemaphorePermit;
 
 pub const WAKE: i32 = 0;
 pub const LOCAL_CANDIDATE: i32 = 1;
@@ -17,6 +18,8 @@ pub const DATA_CHANNEL_BINARY: i32 = 11;
 pub const OPERATION_COMPLETE: i32 = 12;
 pub const DATA_CHANNEL_BUFFERED_AMOUNT_LOW: i32 = 13;
 pub const DATA_CHANNEL_BUFFERED_AMOUNT_HIGH: i32 = 14;
+pub const NEGOTIATION_NEEDED: i32 = 15;
+pub const SIGNALING_STATE: i32 = 16;
 
 #[derive(Debug)]
 pub struct NativeEvent {
@@ -28,6 +31,7 @@ pub struct NativeEvent {
     pub secondary_text: Option<String>,
     pub number: i32,
     pub data: Option<Vec<u8>>,
+    pub delivery_permit: Option<OwnedSemaphorePermit>,
 }
 
 impl NativeEvent {
@@ -41,6 +45,7 @@ impl NativeEvent {
             secondary_text: None,
             number,
             data: None,
+            delivery_permit: None,
         }
     }
 
@@ -54,6 +59,7 @@ impl NativeEvent {
             secondary_text: None,
             number: 0,
             data: None,
+            delivery_permit: None,
         }
     }
 
@@ -68,6 +74,7 @@ impl NativeEvent {
                 secondary_text: None,
                 number: 0,
                 data: value.data,
+                delivery_permit: None,
             },
             Err(error) => Self {
                 kind: OPERATION_COMPLETE,
@@ -78,6 +85,7 @@ impl NativeEvent {
                 secondary_text: Some(error),
                 number: 1,
                 data: None,
+                delivery_permit: None,
             },
         }
     }

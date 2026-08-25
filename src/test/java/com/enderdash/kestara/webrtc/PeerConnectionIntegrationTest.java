@@ -8,10 +8,10 @@ import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.nio.ByteBuffer;
 import java.net.DatagramSocket;
 import java.net.InetSocketAddress;
 import java.net.SocketException;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
@@ -19,8 +19,10 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -171,7 +173,7 @@ class PeerConnectionIntegrationTest {
                 .withCredentials(new IceCredentials(
                         "kestara-test", "kestara-test-password-123"))
                 .withCandidatePoolSize(1);
-        SctpOptions sctp = new SctpOptions(8 * 1024 * 1024, 512 * 1024, 128 * 1024);
+        SctpOptions sctp = new SctpOptions(8 * 1024 * 1024, 512 * 1024, 128 * 1024, 16);
         PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
                 .withIceOptions(ice)
                 .withSctpOptions(sctp)
@@ -202,6 +204,7 @@ class PeerConnectionIntegrationTest {
         ExecutorService callbacks = Executors.newCachedThreadPool();
         PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
                 .withCallbackExecutor(callbacks)
+                .withSctpOptions(SctpOptions.DEFAULT.withReceiveQueueCapacity(2))
                 .withOperationTimeout(Duration.ofSeconds(5));
         WebRtcRuntimeOptions runtimeOptions = WebRtcRuntimeOptions.DEFAULT
                 .withReactorThreads(2)
@@ -221,25 +224,64 @@ class PeerConnectionIntegrationTest {
             CountDownLatch offererOpen = new CountDownLatch(1);
             CountDownLatch incomingChannel = new CountDownLatch(1);
             CountDownLatch answererOpen = new CountDownLatch(1);
-            CountDownLatch binaryReceived = new CountDownLatch(1);
+            CountDownLatch binaryReceived = new CountDownLatch(8);
             AtomicReference<byte[]> received = new AtomicReference<>();
+            AtomicReference<DataChannel> remoteChannel = new AtomicReference<>();
+            AtomicReference<Flow.Subscription> messageSubscription = new AtomicReference<>();
+            AtomicInteger messageIndex = new AtomicInteger();
+            CountDownLatch negotiationNeeded = new CountDownLatch(1);
+            CountDownLatch signalingChanged = new CountDownLatch(1);
 
             answerer.onDataChannel(channel -> {
+                remoteChannel.set(channel);
                 incomingChannel.countDown();
                 channel.onOpen(answererOpen::countDown);
-                channel.onMessage(new DataChannelMessageHandler() {
+                channel.messages().subscribe(new Flow.Subscriber<>() {
                     @Override
-                    public void onBinary(ByteBuffer data) {
-                        byte[] bytes = new byte[data.remaining()];
-                        data.get(bytes);
-                        received.set(bytes);
-                        binaryReceived.countDown();
+                    public void onSubscribe(Flow.Subscription subscription) {
+                        messageSubscription.set(subscription);
                     }
+
+                    @Override
+                    public void onNext(DataChannelMessage message) {
+                        try (message) {
+                            ByteBuffer data = message.data().orElseThrow();
+                            assertTrue(data.isDirect());
+                            byte[] bytes = new byte[data.remaining()];
+                            data.get(bytes);
+                            if (messageIndex.getAndIncrement() == 0) {
+                                received.set(bytes);
+                            }
+                            binaryReceived.countDown();
+                        }
+                    }
+
+                    @Override
+                    public void onError(Throwable error) {
+                        throw new AssertionError(error);
+                    }
+
+                    @Override
+                    public void onComplete() {}
                 });
             });
 
-            DataChannel channel = offerer.createDataChannel("kestara-test");
+            offerer.onNegotiationNeeded(negotiationNeeded::countDown);
+            offerer.onSignalingStateChange(ignored -> signalingChanged.countDown());
+            DataChannelOptions channelOptions = DataChannelOptions.DEFAULT
+                    .withOrdered(false)
+                    .withMaxRetransmits(3)
+                    .withProtocol("kestara-test-protocol");
+            DataChannel channel = offerer.createDataChannel("kestara-test", channelOptions);
             channel.onOpen(offererOpen::countDown);
+            assertEquals("kestara-test", channel.label());
+            assertEquals("kestara-test-protocol", channel.protocol());
+            assertFalse(channel.ordered());
+            assertFalse(channel.negotiated());
+            assertEquals(null, channel.maxPacketLifeTime());
+            assertEquals(3, channel.maxRetransmits());
+            assertTrue(channel.id() >= 0);
+            assertTrue(negotiationNeeded.await(5, TimeUnit.SECONDS));
 
             SessionDescription offer = offerer.createOfferAsync()
                     .toCompletableFuture()
@@ -247,6 +289,8 @@ class PeerConnectionIntegrationTest {
             offerer.setLocalDescriptionAsync(offer)
                     .toCompletableFuture()
                     .get(5, TimeUnit.SECONDS);
+            assertTrue(signalingChanged.await(5, TimeUnit.SECONDS));
+            assertEquals(SignalingState.HAVE_LOCAL_OFFER, offerer.signalingState());
             answerer.setRemoteDescriptionAsync(offer)
                     .toCompletableFuture()
                     .get(5, TimeUnit.SECONDS);
@@ -260,20 +304,40 @@ class PeerConnectionIntegrationTest {
             assertTrue(offererOpen.await(10, TimeUnit.SECONDS), "Offerer DataChannel did not open");
             assertTrue(incomingChannel.await(10, TimeUnit.SECONDS), "Answerer did not receive a DataChannel");
             assertTrue(answererOpen.await(10, TimeUnit.SECONDS), "Answerer DataChannel did not open");
+            DataChannel receivedChannel = remoteChannel.get();
+            assertNotNull(receivedChannel);
+            assertEquals(channel.id(), receivedChannel.id());
+            assertEquals("kestara-test", receivedChannel.label());
+            assertEquals("kestara-test-protocol", receivedChannel.protocol());
+            assertFalse(receivedChannel.ordered());
+            assertFalse(receivedChannel.negotiated());
+            assertEquals(null, receivedChannel.maxPacketLifeTime());
+            assertEquals(3, receivedChannel.maxRetransmits());
 
             byte[] payload = {1, 3, 3, 7};
-            ByteBuffer source = ByteBuffer.wrap(payload);
             channel.setBufferedAmountThresholdsAsync(0, 1)
                     .toCompletableFuture()
                     .get(5, TimeUnit.SECONDS);
-            assertTrue(channel.trySendAsync(source)
-                    .toCompletableFuture()
-                    .get(5, TimeUnit.SECONDS));
+            assertEquals(0, channel.bufferedAmountLowThreshold());
+            assertEquals(1, channel.bufferedAmountHighThreshold());
+            try (NativeBuffer nativeBuffer = runtime.allocateBuffer(payload.length)) {
+                nativeBuffer.buffer().put(payload).flip();
+                assertTrue(channel.trySendAsync(nativeBuffer)
+                        .toCompletableFuture()
+                        .get(5, TimeUnit.SECONDS));
+                assertFalse(nativeBuffer.isOwned());
+            }
+            for (int index = 0; index < 7; index++) {
+                channel.sendAsync(new byte[] {(byte) index})
+                        .toCompletableFuture()
+                        .get(5, TimeUnit.SECONDS);
+            }
+            Thread.sleep(250);
+            assertEquals(0, messageIndex.get(), "Messages arrived without subscriber demand");
+            messageSubscription.get().request(8);
             channel.writableAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
 
-            assertEquals(0, source.position());
-
-            assertTrue(binaryReceived.await(10, TimeUnit.SECONDS), "Binary message was not received");
+            assertTrue(binaryReceived.await(10, TimeUnit.SECONDS), "Backpressured messages were not received");
             assertArrayEquals(payload, received.get());
             PeerConnectionStats stats = offerer.getStatsAsync()
                     .toCompletableFuture()

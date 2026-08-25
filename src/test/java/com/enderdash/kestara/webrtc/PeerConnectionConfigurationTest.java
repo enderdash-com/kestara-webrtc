@@ -76,6 +76,9 @@ class PeerConnectionConfigurationTest {
                 () -> IceOptions.DEFAULT.withCandidatePoolSize(2));
         assertThrows(
                 IllegalArgumentException.class,
-                () -> new SctpOptions(1_024, 32_768, 65_536));
+                () -> new SctpOptions(1_024, 32_768, 65_536, 64));
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> SctpOptions.DEFAULT.withReceiveQueueCapacity(0));
     }
 }

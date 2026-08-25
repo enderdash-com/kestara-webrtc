@@ -18,8 +18,11 @@ Kestara WebRTC is a WebRTC DataChannel library for Java. It provides a small Jav
 - ICE restart and live ICE server updates
 - Candidate gathering before negotiation
 - Ordered, unordered, reliable, and partially reliable DataChannels
-- SCTP send buffers, receive windows, and maximum message sizes
-- Text and binary messages
+- Bounded inbound delivery with a backpressured `Flow.Publisher`
+- SCTP send buffers, receive windows, queue limits, and maximum message sizes
+- Text messages and direct-buffer binary messages
+- Negotiation-needed events and signaling-state tracking
+- DataChannel identifiers, reliability settings, and buffered-amount metadata
 - Isolated runtimes with configurable Rust worker counts
 - Non-blocking operations through `CompletionStage`
 - Deterministic, bounded native shutdown
@@ -96,7 +99,7 @@ try (WebRtcRuntime runtime = WebRtcRuntime.create();
 
 The application provides signaling. It must send local descriptions and ICE candidates to the remote peer.
 
-Set each callback before an operation that can produce its event. Incoming DataChannel callbacks can register message and lifecycle handlers before Kestara reports an already-open channel.
+Set each callback before an operation that can produce its event. Subscribe to an incoming channel's message publisher in `onDataChannel`.
 
 ## Lifecycle and threads
 
@@ -137,6 +140,54 @@ Rust protocol tasks run on runtime-owned Tokio workers. One daemon Java thread p
 
 Blocking Java operations use the configured operation timeout. Runtime shutdown uses `WebRtcRuntimeOptions.shutdownTimeout()`.
 
+## Receive messages with backpressure
+
+Each DataChannel has one inbound subscriber. The subscriber receives messages only after it requests demand.
+
+```java
+channel.messages().subscribe(new Flow.Subscriber<>() {
+    private Flow.Subscription subscription;
+
+    @Override
+    public void onSubscribe(Flow.Subscription value) {
+        subscription = value;
+        subscription.request(1);
+    }
+
+    @Override
+    public void onNext(DataChannelMessage message) {
+        try (message) {
+            message.text().ifPresent(text -> handleText(text));
+            message.data().ifPresent(data -> handleBinary(data));
+        }
+        subscription.request(1);
+    }
+
+    @Override
+    public void onError(Throwable error) {
+        reportChannelFailure(error);
+    }
+
+    @Override
+    public void onComplete() {}
+});
+```
+
+Always close each message after use. A message owns its native delivery slot and any direct binary storage. When all slots are in use, Kestara pauses native delivery and applies backpressure to the SCTP transport.
+
+Use a runtime-owned buffer to send binary data without copying it through a Java array:
+
+```java
+try (NativeBuffer message = runtime.allocateBuffer(payloadSize)) {
+    ByteBuffer data = message.buffer();
+    encodePayload(data);
+    data.flip();
+    channel.sendAsync(message);
+}
+```
+
+Sending consumes the buffer. Do not use a `ByteBuffer` view after its `NativeBuffer` or `DataChannelMessage` is sent, closed, or invalidated by runtime shutdown.
+
 ## ICE and SCTP configuration
 
 Use `IceOptions` for transport behavior that does not belong to the standard ICE server list.
@@ -158,7 +209,8 @@ var ice = IceOptions.DEFAULT
 var sctp = SctpOptions.DEFAULT
         .withSendBufferLimit(8 * 1024 * 1024)
         .withReceiveBufferSize(512 * 1024)
-        .withMaximumMessageSize(128 * 1024);
+        .withMaximumMessageSize(128 * 1024)
+        .withReceiveQueueCapacity(64);
 
 var configuration = PeerConnectionConfiguration.DEFAULT
         .withIceOptions(ice)
@@ -225,7 +277,7 @@ Each Java and native release declares an ABI version. Library startup stops when
 
 ## Status
 
-The current implementation has an end-to-end integration test that creates two local peers, exchanges an offer, answer, and trickle ICE candidates, opens an ordered DataChannel, and sends a binary message.
+The end-to-end integration test creates two local peers, exchanges an offer, answer, and trickle ICE candidates, and opens an unordered, partially reliable DataChannel. It verifies bounded delivery, subscriber demand, native direct buffers, and metadata on both peers.
 
 Before the first stable release, the project still needs broader network tests. It also needs browser compatibility and shutdown-cycle soak tests.
 

@@ -3,6 +3,8 @@ package com.enderdash.kestara.webrtc;
 import com.enderdash.kestara.webrtc.internal.NativeBindings;
 import com.enderdash.kestara.webrtc.internal.NativeEvent;
 import com.enderdash.kestara.webrtc.internal.SerialExecutor;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -19,11 +21,14 @@ public final class PeerConnection implements AutoCloseable {
     private static final Consumer<PeerConnectionState> NOOP_STATE = ignored -> {};
     private static final Consumer<IceConnectionState> NOOP_ICE_STATE = ignored -> {};
     private static final Consumer<IceGatheringState> NOOP_GATHERING_STATE = ignored -> {};
+    private static final Consumer<SignalingState> NOOP_SIGNALING_STATE = ignored -> {};
+    private static final Runnable NOOP = () -> {};
 
     private final WebRtcRuntime runtime;
     private final long handle;
     private final long operationTimeoutMillis;
     private final SerialExecutor callbacks;
+    private final int receiveQueueCapacity;
     private final Map<Long, DataChannel> dataChannels = new ConcurrentHashMap<>();
     private final Object closeLock = new Object();
     private volatile boolean closing;
@@ -32,18 +37,22 @@ public final class PeerConnection implements AutoCloseable {
     private volatile PeerConnectionState state = PeerConnectionState.NEW;
     private volatile IceConnectionState iceConnectionState = IceConnectionState.NEW;
     private volatile IceGatheringState iceGatheringState = IceGatheringState.NEW;
+    private volatile SignalingState signalingState = SignalingState.STABLE;
     private volatile Consumer<SessionDescription> onLocalDescription = NOOP_DESCRIPTION;
     private volatile Consumer<IceCandidate> onLocalCandidate = NOOP_CANDIDATE;
     private volatile Consumer<DataChannel> onDataChannel = NOOP_DATA_CHANNEL;
     private volatile Consumer<PeerConnectionState> onStateChange = NOOP_STATE;
     private volatile Consumer<IceConnectionState> onIceConnectionStateChange = NOOP_ICE_STATE;
     private volatile Consumer<IceGatheringState> onIceGatheringStateChange = NOOP_GATHERING_STATE;
+    private volatile Consumer<SignalingState> onSignalingStateChange = NOOP_SIGNALING_STATE;
+    private volatile Runnable onNegotiationNeeded = NOOP;
 
     PeerConnection(
             WebRtcRuntime runtime, long handle, PeerConnectionConfiguration configuration) {
         this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.handle = handle;
         operationTimeoutMillis = configuration.operationTimeoutMillis();
+        receiveQueueCapacity = configuration.sctpOptions().receiveQueueCapacity();
         callbacks = new SerialExecutor(configuration.callbackExecutor());
     }
 
@@ -72,6 +81,13 @@ public final class PeerConnection implements AutoCloseable {
      */
     public IceGatheringState iceGatheringState() {
         return iceGatheringState;
+    }
+
+    /** Returns the SDP signaling state.
+     * @return the signaling state
+     */
+    public SignalingState signalingState() {
+        return signalingState;
     }
 
     /**
@@ -126,6 +142,20 @@ public final class PeerConnection implements AutoCloseable {
      */
     public void onIceGatheringStateChange(Consumer<IceGatheringState> callback) {
         onIceGatheringStateChange = Objects.requireNonNull(callback, "callback");
+    }
+
+    /** Sets the callback for SDP signaling-state changes.
+     * @param callback the callback
+     */
+    public void onSignalingStateChange(Consumer<SignalingState> callback) {
+        onSignalingStateChange = Objects.requireNonNull(callback, "callback");
+    }
+
+    /** Sets the callback fired when creating an offer is required.
+     * @param callback the callback
+     */
+    public void onNegotiationNeeded(Runnable callback) {
+        onNegotiationNeeded = Objects.requireNonNull(callback, "callback");
     }
 
     /**
@@ -361,13 +391,19 @@ public final class PeerConnection implements AutoCloseable {
         Objects.requireNonNull(options, "options");
         requireOpen();
         return runtime.createDataChannelAsync(handle, label, options, operationTimeoutMillis)
-                .thenApply(channelHandle -> {
+                .thenApply(registration -> {
+                    long channelHandle = registration.handle();
                     DataChannel channel = new DataChannel(
                             runtime,
                             channelHandle,
+                            registration.id(),
                             label,
                             options.protocol(),
                             options.ordered(),
+                            options.negotiatedId() != null,
+                            options.maxPacketLifeTime(),
+                            options.maxRetransmits(),
+                            receiveQueueCapacity,
                             operationTimeoutMillis,
                             callbacks,
                             false,
@@ -434,7 +470,7 @@ public final class PeerConnection implements AutoCloseable {
     }
 
     void closeForRuntimeShutdown() {
-        markClosed();
+        markClosed(true);
     }
 
     void handleNativeEvent(NativeEvent event) {
@@ -464,6 +500,14 @@ public final class PeerConnection implements AutoCloseable {
                     iceGatheringState = newState;
                     callbacks.execute(() -> onIceGatheringStateChange.accept(newState));
                 }
+                case NativeBindings.EVENT_SIGNALING_STATE -> {
+                    SignalingState newState = enumValue(
+                            SignalingState.values(), event.number(), "signaling state");
+                    signalingState = newState;
+                    callbacks.execute(() -> onSignalingStateChange.accept(newState));
+                }
+                case NativeBindings.EVENT_NEGOTIATION_NEEDED ->
+                    callbacks.execute(onNegotiationNeeded);
                 case NativeBindings.EVENT_DATA_CHANNEL -> registerRemoteDataChannel(event);
                 case NativeBindings.EVENT_DATA_CHANNEL_OPEN,
                         NativeBindings.EVENT_DATA_CHANNEL_CLOSING,
@@ -486,13 +530,20 @@ public final class PeerConnection implements AutoCloseable {
     private void registerRemoteDataChannel(NativeEvent event) {
         boolean ordered = (event.number() & 1) != 0;
         boolean initiallyOpen = (event.number() & 2) != 0;
+        int id = event.number() >>> 2;
+        ChannelMetadata metadata = decodeChannelMetadata(event.data());
         long channelHandle = event.channelHandle();
         DataChannel channel = new DataChannel(
                 runtime,
                 channelHandle,
+                id,
                 event.text() == null ? "" : event.text(),
                 event.secondaryText() == null ? "" : event.secondaryText(),
                 ordered,
+                metadata.negotiated(),
+                metadata.maxPacketLifeTime(),
+                metadata.maxRetransmits(),
+                receiveQueueCapacity,
                 operationTimeoutMillis,
                 callbacks,
                 initiallyOpen,
@@ -514,6 +565,10 @@ public final class PeerConnection implements AutoCloseable {
     }
 
     private void markClosed() {
+        markClosed(false);
+    }
+
+    private void markClosed(boolean runtimeShutdown) {
         synchronized (closeLock) {
             if (closed) {
                 return;
@@ -521,10 +576,15 @@ public final class PeerConnection implements AutoCloseable {
             closing = true;
             closed = true;
             for (DataChannel channel : dataChannels.values()) {
-                channel.markClosed();
+                if (runtimeShutdown) {
+                    channel.closeForRuntimeShutdown();
+                } else {
+                    channel.markClosed();
+                }
             }
             dataChannels.clear();
             state = PeerConnectionState.CLOSED;
+            signalingState = SignalingState.CLOSED;
             runtime.unregisterPeer(handle, this);
             if (closeFuture == null) {
                 closeFuture = CompletableFuture.completedFuture(null);
@@ -544,4 +604,21 @@ public final class PeerConnection implements AutoCloseable {
         }
         return values[ordinal];
     }
+
+    private static ChannelMetadata decodeChannelMetadata(byte[] data) {
+        if (data == null || data.length != 9) {
+            throw new IllegalArgumentException("Invalid native DataChannel metadata");
+        }
+        ByteBuffer buffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        boolean negotiated = buffer.get() != 0;
+        int lifetime = buffer.getInt();
+        int retransmits = buffer.getInt();
+        return new ChannelMetadata(
+                negotiated,
+                lifetime < 0 ? null : lifetime,
+                retransmits < 0 ? null : retransmits);
+    }
+
+    private record ChannelMetadata(
+            boolean negotiated, Integer maxPacketLifeTime, Integer maxRetransmits) {}
 }

@@ -1,5 +1,7 @@
 package com.enderdash.kestara.webrtc.internal;
 
+import java.nio.ByteBuffer;
+
 /**
  * One event copied from the Rust runtime.
  *
@@ -13,4 +15,6 @@ public record NativeEvent(
         String text,
         String secondaryText,
         int number,
-        byte[] data) {}
+        byte[] data,
+        long messageHandle,
+        ByteBuffer directData) {}

@@ -22,6 +22,8 @@ public final class NativeBindings {
     public static final int EVENT_OPERATION_COMPLETE = 12;
     public static final int EVENT_DATA_CHANNEL_BUFFERED_AMOUNT_LOW = 13;
     public static final int EVENT_DATA_CHANNEL_BUFFERED_AMOUNT_HIGH = 14;
+    public static final int EVENT_NEGOTIATION_NEEDED = 15;
+    public static final int EVENT_SIGNALING_STATE = 16;
 
     static {
         NativeLibraryLoader.load();
@@ -85,6 +87,7 @@ public final class NativeBindings {
             int sctpSendBufferLimit,
             int sctpReceiveBufferSize,
             int sctpMaximumMessageSize,
+            int dataChannelReceiveQueueCapacity,
             int dtlsAnsweringRole,
             boolean mediaLevelFingerprints,
             int dtlsReplayProtectionWindow,
@@ -158,6 +161,20 @@ public final class NativeBindings {
 
     public static native void nativeSubmitTrySendDataChannelBinary(
             long runtime, long operation, long channel, byte[] data, long timeoutMillis);
+
+    public static native NativeBufferDescriptor nativeAllocateBuffer(long runtime, int capacity);
+
+    public static native void nativeReleaseBuffer(long runtime, long buffer);
+
+    public static native void nativeSubmitSendDataChannelBuffer(
+            long runtime,
+            long operation,
+            long channel,
+            long buffer,
+            int offset,
+            int length,
+            boolean trySend,
+            long timeoutMillis);
 
     public static native void nativeSubmitDataChannelWritable(
             long runtime, long operation, long channel, long timeoutMillis);
