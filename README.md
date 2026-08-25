@@ -45,7 +45,9 @@ dependencies {
 }
 ```
 
-Use a commit hash instead of `main-SNAPSHOT` when a build must be reproducible. The current Gradle build publishes one JAR for the host platform. Release automation must combine the supported native libraries before the first public release.
+Use a commit hash instead of `main-SNAPSHOT` when a build must be reproducible. JitPack builds contain the native library for its build platform.
+
+Maven Central releases contain native libraries for Linux, macOS, and Windows. Each release supports `x86_64` and `aarch64` systems.
 
 ## Quick start
 
@@ -105,6 +107,8 @@ Create the host-platform JAR:
 
 Gradle builds the Rust library for the current operating system and architecture. It adds the library under `META-INF/native` in the JAR.
 
+Maintainers can publish a signed cross-platform release with the [Maven Central publishing workflow](./PUBLISHING.md).
+
 ## Architecture
 
 The Java layer owns the public API and application event dispatch. The Rust layer owns WebRTC protocol state, networking, and native resource cleanup. JNI is a small handle-based boundary between these layers.
@@ -115,7 +119,7 @@ Each Java and native release declares an ABI version. Library startup stops when
 
 The current implementation has an end-to-end integration test that creates two local peers, exchanges an offer, answer, and trickle ICE candidates, opens an ordered DataChannel, and sends a binary message.
 
-Before the first stable release, the project still needs cross-platform artifact assembly and broader network tests. It also needs browser compatibility tests and soak tests for repeated connection and shutdown cycles.
+Before the first stable release, the project still needs broader network tests. It also needs browser compatibility and shutdown-cycle soak tests.
 
 ## License
 
