@@ -5,6 +5,7 @@ import com.enderdash.kestara.webrtc.internal.NativeEvent;
 import com.enderdash.kestara.webrtc.internal.SerialExecutor;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
@@ -304,6 +305,39 @@ public final class PeerConnection implements AutoCloseable {
         runtime.await(setConfigurationAsync(configuration), operationTimeoutMillis);
     }
 
+    /** Returns a point-in-time native transport and ICE diagnostics snapshot.
+     * @return the stats stage
+     */
+    public CompletionStage<PeerConnectionStats> getStatsAsync() {
+        requireOpen();
+        return runtime.getStatsAsync(handle, operationTimeoutMillis);
+    }
+
+    /** Returns a point-in-time native transport and ICE diagnostics snapshot.
+     * @return the stats snapshot
+     */
+    public PeerConnectionStats getStats() {
+        return runtime.await(getStatsAsync(), operationTimeoutMillis);
+    }
+
+    /**
+     * Returns the currently selected ICE candidate pair.
+     *
+     * @return a stage with the pair, or an empty value before ICE selection
+     */
+    public CompletionStage<Optional<IceCandidatePairStats>> selectedIceCandidatePairAsync() {
+        return getStatsAsync().thenApply(stats -> stats.transport().selectedCandidatePair());
+    }
+
+    /**
+     * Returns the currently selected ICE candidate pair.
+     *
+     * @return the pair, or an empty value before ICE selection
+     */
+    public Optional<IceCandidatePairStats> selectedIceCandidatePair() {
+        return runtime.await(selectedIceCandidatePairAsync(), operationTimeoutMillis);
+    }
+
     /**
      * Creates an ordered and reliable DataChannel without blocking the caller.
      *
@@ -436,7 +470,10 @@ public final class PeerConnection implements AutoCloseable {
                         NativeBindings.EVENT_DATA_CHANNEL_CLOSED,
                         NativeBindings.EVENT_DATA_CHANNEL_ERROR,
                         NativeBindings.EVENT_DATA_CHANNEL_TEXT,
-                        NativeBindings.EVENT_DATA_CHANNEL_BINARY -> routeDataChannelEvent(event);
+                        NativeBindings.EVENT_DATA_CHANNEL_BINARY,
+                        NativeBindings.EVENT_DATA_CHANNEL_BUFFERED_AMOUNT_LOW,
+                        NativeBindings.EVENT_DATA_CHANNEL_BUFFERED_AMOUNT_HIGH ->
+                    routeDataChannelEvent(event);
                 default -> throw new IllegalArgumentException(
                         "Unsupported peer event: " + event.kind());
             }

@@ -20,6 +20,8 @@ public final class NativeBindings {
     public static final int EVENT_DATA_CHANNEL_TEXT = 10;
     public static final int EVENT_DATA_CHANNEL_BINARY = 11;
     public static final int EVENT_OPERATION_COMPLETE = 12;
+    public static final int EVENT_DATA_CHANNEL_BUFFERED_AMOUNT_LOW = 13;
+    public static final int EVENT_DATA_CHANNEL_BUFFERED_AMOUNT_HIGH = 14;
 
     static {
         NativeLibraryLoader.load();
@@ -36,9 +38,18 @@ public final class NativeBindings {
                 nativeLibraryVersion(), "The native library returned a null version");
     }
 
-    public static native long nativeCreateRuntime(int workerThreads);
+    public static native long nativeCreateRuntime(
+            int workerThreads,
+            int reactorThreads,
+            String certificatePem,
+            String[] sharedUdpAddresses,
+            String[] sharedTcpAddresses,
+            int sharedMinPort,
+            int sharedMaxPort);
 
     public static native String nativeRuntimeCertificateFingerprint(long runtime);
+
+    public static native String nativeRuntimeCertificatePem(long runtime);
 
     public static native void nativeSubmitCreatePeer(
             long runtime,
@@ -66,9 +77,21 @@ public final class NativeBindings {
             int natMappingType,
             boolean discardLocalCandidatesOnRestart,
             int candidatePoolSize,
+            boolean includeLoopbackCandidate,
+            String mdnsLocalName,
+            String mdnsLocalAddress,
+            String iceUsernameFragment,
+            String icePassword,
             int sctpSendBufferLimit,
             int sctpReceiveBufferSize,
             int sctpMaximumMessageSize,
+            int dtlsAnsweringRole,
+            boolean mediaLevelFingerprints,
+            int dtlsReplayProtectionWindow,
+            int dtlsCipherSuiteMask,
+            String[] udpBindAddresses,
+            String[] tcpBindAddresses,
+            int receiveMtu,
             long timeoutMillis);
 
     public static native void nativeSubmitRestartIce(
@@ -129,6 +152,27 @@ public final class NativeBindings {
 
     public static native void nativeSubmitSendDataChannelBinary(
             long runtime, long operation, long channel, byte[] data, long timeoutMillis);
+
+    public static native void nativeSubmitTrySendDataChannelText(
+            long runtime, long operation, long channel, String text, long timeoutMillis);
+
+    public static native void nativeSubmitTrySendDataChannelBinary(
+            long runtime, long operation, long channel, byte[] data, long timeoutMillis);
+
+    public static native void nativeSubmitDataChannelWritable(
+            long runtime, long operation, long channel, long timeoutMillis);
+
+    public static native void nativeSubmitDataChannelOutstandingBytes(
+            long runtime, long operation, long channel, long timeoutMillis);
+
+    public static native void nativeSubmitSetDataChannelThresholds(
+            long runtime, long operation, long channel, long low, long high, long timeoutMillis);
+
+    public static native void nativeSubmitGetStats(
+            long runtime, long operation, long peer, long timeoutMillis);
+
+    public static native void nativeSubmitRotateCertificate(
+            long runtime, long operation, String certificatePem, long timeoutMillis);
 
     public static native void nativeSubmitCloseDataChannel(
             long runtime, long operation, long channel, long timeoutMillis);

@@ -1486,6 +1486,7 @@ dependencies = [
  "bytes",
  "hex",
  "log",
+ "pem",
  "rand",
  "rcgen",
  "ring",
@@ -1543,6 +1544,7 @@ dependencies = [
  "log",
  "p256",
  "p384",
+ "pem",
  "rand",
  "rand_core 0.6.4",
  "rcgen",
@@ -2277,7 +2279,7 @@ dependencies = [
 [[package]]
 name = "webrtc"
 version = "0.20.3"
-source = "git+https://github.com/enderdash-com/webrtc.git?rev=3bd161691787fd8122073f77588e011d2b1ff3cc#3bd161691787fd8122073f77588e011d2b1ff3cc"
+source = "git+https://github.com/enderdash-com/webrtc.git?rev=e74661e71b8f0b1e981e7541282633a37a644202#e74661e71b8f0b1e981e7541282633a37a644202"
 dependencies = [
  "async-broadcast",
  "async-channel",

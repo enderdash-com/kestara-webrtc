@@ -42,6 +42,10 @@ public final class IceOptions {
     private final IceNatMapping natMapping;
     private final boolean discardLocalCandidatesOnRestart;
     private final int candidatePoolSize;
+    private final boolean includeLoopbackCandidate;
+    private final String mdnsLocalName;
+    private final String mdnsLocalAddress;
+    private final IceCredentials credentials;
 
     private IceOptions(
             Duration disconnectedTimeout,
@@ -60,6 +64,50 @@ public final class IceOptions {
             IceNatMapping natMapping,
             boolean discardLocalCandidatesOnRestart,
             int candidatePoolSize) {
+        this(
+                disconnectedTimeout,
+                failedTimeout,
+                keepAliveInterval,
+                checkInterval,
+                maxBindingRequests,
+                hostAcceptanceMinWait,
+                serverReflexiveAcceptanceMinWait,
+                peerReflexiveAcceptanceMinWait,
+                relayAcceptanceMinWait,
+                networkTypes,
+                mdnsMode,
+                mdnsQueryTimeout,
+                lite,
+                natMapping,
+                discardLocalCandidatesOnRestart,
+                candidatePoolSize,
+                false,
+                null,
+                null,
+                null);
+    }
+
+    private IceOptions(
+            Duration disconnectedTimeout,
+            Duration failedTimeout,
+            Duration keepAliveInterval,
+            Duration checkInterval,
+            Integer maxBindingRequests,
+            Duration hostAcceptanceMinWait,
+            Duration serverReflexiveAcceptanceMinWait,
+            Duration peerReflexiveAcceptanceMinWait,
+            Duration relayAcceptanceMinWait,
+            Set<IceNetworkType> networkTypes,
+            IceMdnsMode mdnsMode,
+            Duration mdnsQueryTimeout,
+            boolean lite,
+            IceNatMapping natMapping,
+            boolean discardLocalCandidatesOnRestart,
+            int candidatePoolSize,
+            boolean includeLoopbackCandidate,
+            String mdnsLocalName,
+            String mdnsLocalAddress,
+            IceCredentials credentials) {
         this.disconnectedTimeout = disconnectedTimeout;
         this.failedTimeout = failedTimeout;
         this.keepAliveInterval = keepAliveInterval;
@@ -76,6 +124,10 @@ public final class IceOptions {
         this.natMapping = natMapping;
         this.discardLocalCandidatesOnRestart = discardLocalCandidatesOnRestart;
         this.candidatePoolSize = candidatePoolSize;
+        this.includeLoopbackCandidate = includeLoopbackCandidate;
+        this.mdnsLocalName = mdnsLocalName;
+        this.mdnsLocalAddress = mdnsLocalAddress;
+        this.credentials = credentials;
     }
 
     /**
@@ -220,6 +272,34 @@ public final class IceOptions {
      */
     public int candidatePoolSize() {
         return candidatePoolSize;
+    }
+
+    /** Returns whether ICE can gather loopback candidates.
+     * @return {@code true} when loopback candidates are enabled
+     */
+    public boolean includeLoopbackCandidate() {
+        return includeLoopbackCandidate;
+    }
+
+    /** Returns the explicit local mDNS name, when configured.
+     * @return the local mDNS name
+     */
+    public Optional<String> mdnsLocalName() {
+        return Optional.ofNullable(mdnsLocalName);
+    }
+
+    /** Returns the explicit address represented by the local mDNS name.
+     * @return the represented IP address
+     */
+    public Optional<String> mdnsLocalAddress() {
+        return Optional.ofNullable(mdnsLocalAddress);
+    }
+
+    /** Returns fixed local ICE credentials, when configured.
+     * @return the local ICE credentials
+     */
+    public Optional<IceCredentials> credentials() {
+        return Optional.ofNullable(credentials);
     }
 
     /**
@@ -423,6 +503,78 @@ public final class IceOptions {
         return copyWith(lite, natMapping, discardLocalCandidatesOnRestart, value);
     }
 
+    /** Returns a copy that controls loopback candidate gathering.
+     * @param value {@code true} to include loopback candidates
+     * @return the updated options
+     */
+    public IceOptions withIncludeLoopbackCandidate(boolean value) {
+        return copyAdvanced(value, mdnsLocalName, mdnsLocalAddress, credentials);
+    }
+
+    /** Returns a copy with an explicit mDNS hostname and represented IP address.
+     * @param localName the name, ending in {@code .local}
+     * @param localAddress the represented IP address
+     * @return the updated options
+     */
+    public IceOptions withMdnsLocalIdentity(String localName, String localAddress) {
+        Objects.requireNonNull(localName, "localName");
+        Objects.requireNonNull(localAddress, "localAddress");
+        if (localName.isBlank() || !localName.endsWith(".local")) {
+            throw new IllegalArgumentException("mDNS local name must end with .local");
+        }
+        if (localAddress.isBlank()) {
+            throw new IllegalArgumentException("mDNS local address must not be blank");
+        }
+        return copyAdvanced(includeLoopbackCandidate, localName, localAddress, credentials);
+    }
+
+    /** Returns a copy with fixed local ICE credentials.
+     * @param value the credentials
+     * @return the updated options
+     */
+    public IceOptions withCredentials(IceCredentials value) {
+        return copyAdvanced(
+                includeLoopbackCandidate,
+                mdnsLocalName,
+                mdnsLocalAddress,
+                Objects.requireNonNull(value, "value"));
+    }
+
+    /** Returns a copy with generated local ICE credentials.
+     * @return the updated options
+     */
+    public IceOptions withoutCredentials() {
+        return copyAdvanced(includeLoopbackCandidate, mdnsLocalName, mdnsLocalAddress, null);
+    }
+
+    private IceOptions copyAdvanced(
+            boolean newIncludeLoopbackCandidate,
+            String newMdnsLocalName,
+            String newMdnsLocalAddress,
+            IceCredentials newCredentials) {
+        return new IceOptions(
+                disconnectedTimeout,
+                failedTimeout,
+                keepAliveInterval,
+                checkInterval,
+                maxBindingRequests,
+                hostAcceptanceMinWait,
+                serverReflexiveAcceptanceMinWait,
+                peerReflexiveAcceptanceMinWait,
+                relayAcceptanceMinWait,
+                networkTypes,
+                mdnsMode,
+                mdnsQueryTimeout,
+                lite,
+                natMapping,
+                discardLocalCandidatesOnRestart,
+                candidatePoolSize,
+                newIncludeLoopbackCandidate,
+                newMdnsLocalName,
+                newMdnsLocalAddress,
+                newCredentials);
+    }
+
     private IceOptions copyWith(
             boolean newLite,
             IceNatMapping newNatMapping,
@@ -463,7 +615,7 @@ public final class IceOptions {
         return value;
     }
 
-    private static IceOptions copy(
+    private IceOptions copy(
             Duration disconnectedTimeout,
             Duration failedTimeout,
             Duration keepAliveInterval,
@@ -496,6 +648,10 @@ public final class IceOptions {
                 lite,
                 natMapping,
                 discardLocalCandidatesOnRestart,
-                candidatePoolSize);
+                candidatePoolSize,
+                includeLoopbackCandidate,
+                mdnsLocalName,
+                mdnsLocalAddress,
+                credentials);
     }
 }

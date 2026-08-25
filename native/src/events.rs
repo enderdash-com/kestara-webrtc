@@ -15,6 +15,8 @@ pub const DATA_CHANNEL_ERROR: i32 = 9;
 pub const DATA_CHANNEL_TEXT: i32 = 10;
 pub const DATA_CHANNEL_BINARY: i32 = 11;
 pub const OPERATION_COMPLETE: i32 = 12;
+pub const DATA_CHANNEL_BUFFERED_AMOUNT_LOW: i32 = 13;
+pub const DATA_CHANNEL_BUFFERED_AMOUNT_HIGH: i32 = 14;
 
 #[derive(Debug)]
 pub struct NativeEvent {
@@ -65,7 +67,7 @@ impl NativeEvent {
                 text: value.text,
                 secondary_text: None,
                 number: 0,
-                data: None,
+                data: value.data,
             },
             Err(error) => Self {
                 kind: OPERATION_COMPLETE,
@@ -86,6 +88,7 @@ pub struct OperationValue {
     pub peer_handle: u64,
     pub channel_handle: u64,
     pub text: Option<String>,
+    pub data: Option<Vec<u8>>,
 }
 
 pub fn poll(receiver: &Receiver<NativeEvent>, timeout: Duration) -> Option<NativeEvent> {

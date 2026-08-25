@@ -25,7 +25,7 @@ public final class WebRtcRuntime implements AutoCloseable {
 
     private final long handle;
     private final WebRtcRuntimeOptions options;
-    private final String certificateFingerprint;
+    private volatile String certificateFingerprint;
     private final AtomicLong nextOperation = new AtomicLong(1);
     private final ConcurrentMap<Long, PendingOperation<?>> operations = new ConcurrentHashMap<>();
     private final ConcurrentMap<Long, PeerConnection> peers = new ConcurrentHashMap<>();
@@ -66,7 +66,15 @@ public final class WebRtcRuntime implements AutoCloseable {
     public static WebRtcRuntime create(WebRtcRuntimeOptions options) {
         Objects.requireNonNull(options, "options");
         KestaraWebRtc.ensureNativeAbi();
-        long handle = NativeBindings.nativeCreateRuntime(options.workerThreads());
+        SharedSocketOptions sockets = options.sharedSockets();
+        long handle = NativeBindings.nativeCreateRuntime(
+                options.workerThreads(),
+                options.reactorThreads(),
+                options.certificate() == null ? "" : options.certificate().pem(),
+                sockets == null ? new String[0] : sockets.udpBindAddresses().toArray(String[]::new),
+                sockets == null ? new String[0] : sockets.tcpBindAddresses().toArray(String[]::new),
+                sockets == null ? 0 : sockets.minPort(),
+                sockets == null ? 0 : sockets.maxPort());
         try {
             return new WebRtcRuntime(handle, options);
         } catch (RuntimeException | Error error) {
@@ -97,6 +105,37 @@ public final class WebRtcRuntime implements AutoCloseable {
         return certificateFingerprint;
     }
 
+    /** Exports the current certificate and private key for secure persistence.
+     * @return the current certificate
+     */
+    public DtlsCertificate certificate() {
+        return DtlsCertificate.fromPem(NativeBindings.nativeRuntimeCertificatePem(handle));
+    }
+
+    /** Generates a new certificate for peer connections created after rotation.
+     * @return a stage with the new fingerprint
+     */
+    public CompletionStage<String> rotateCertificateAsync() {
+        return rotateCertificateAsync(null);
+    }
+
+    /** Imports a certificate for peer connections created after rotation.
+     * @param certificate the certificate, or {@code null} to generate one
+     * @return a stage with the new fingerprint
+     */
+    public CompletionStage<String> rotateCertificateAsync(DtlsCertificate certificate) {
+        return submit(
+                event -> {
+                    certificateFingerprint = Objects.requireNonNull(event.text(), "certificate fingerprint");
+                    return certificateFingerprint;
+                },
+                operation -> NativeBindings.nativeSubmitRotateCertificate(
+                        handle,
+                        operation,
+                        certificate == null ? "" : certificate.pem(),
+                        options.shutdownTimeout().toMillis()));
+    }
+
     /**
      * Returns current runtime counters and lifecycle state.
      *
@@ -108,6 +147,7 @@ public final class WebRtcRuntime implements AutoCloseable {
                 .sum();
         return new WebRtcRuntimeDiagnostics(
                 options.workerThreads(),
+                options.reactorThreads(),
                 peers.size(),
                 channels,
                 operations.size(),
@@ -127,7 +167,10 @@ public final class WebRtcRuntime implements AutoCloseable {
         NativeConfiguration nativeConfiguration = NativeConfiguration.from(configuration);
         IceOptions ice = configuration.iceOptions();
         SctpOptions sctp = configuration.sctpOptions();
+        DtlsOptions dtls = configuration.dtlsOptions();
+        TransportOptions transport = configuration.transportOptions();
         IceNatMapping natMapping = ice.natMapping().orElse(null);
+        IceCredentials iceCredentials = ice.credentials().orElse(null);
         return submit(
                 event -> {
                     PeerConnection peer = new PeerConnection(this, event.peerHandle(), configuration);
@@ -162,9 +205,21 @@ public final class WebRtcRuntime implements AutoCloseable {
                         natMapping == null ? -1 : natMapping.type().ordinal(),
                         ice.discardLocalCandidatesOnRestart(),
                         ice.candidatePoolSize(),
+                        ice.includeLoopbackCandidate(),
+                        ice.mdnsLocalName().orElse(""),
+                        ice.mdnsLocalAddress().orElse(""),
+                        iceCredentials == null ? "" : iceCredentials.usernameFragment(),
+                        iceCredentials == null ? "" : iceCredentials.password(),
                         sctp.sendBufferLimit(),
                         sctp.receiveBufferSize(),
                         sctp.maximumMessageSize(),
+                        dtls.answeringRole().ordinal(),
+                        dtls.mediaLevelFingerprints(),
+                        dtls.replayProtectionWindow(),
+                        cipherSuiteMask(dtls),
+                        transport.udpBindAddresses().toArray(String[]::new),
+                        transport.tcpBindAddresses().toArray(String[]::new),
+                        transport.receiveMtu(),
                         configuration.operationTimeoutMillis()));
     }
 
@@ -314,6 +369,49 @@ public final class WebRtcRuntime implements AutoCloseable {
                 ignored -> null,
                 operation -> NativeBindings.nativeSubmitSendDataChannelBinary(
                         handle, operation, channel, data, timeoutMillis));
+    }
+
+    CompletionStage<Boolean> trySendTextAsync(long channel, String text, long timeoutMillis) {
+        return submit(
+                event -> Boolean.parseBoolean(event.text()),
+                operation -> NativeBindings.nativeSubmitTrySendDataChannelText(
+                        handle, operation, channel, text, timeoutMillis));
+    }
+
+    CompletionStage<Boolean> trySendBinaryAsync(long channel, byte[] data, long timeoutMillis) {
+        return submit(
+                event -> Boolean.parseBoolean(event.text()),
+                operation -> NativeBindings.nativeSubmitTrySendDataChannelBinary(
+                        handle, operation, channel, data, timeoutMillis));
+    }
+
+    CompletionStage<Void> dataChannelWritableAsync(long channel, long timeoutMillis) {
+        return submit(
+                ignored -> null,
+                operation -> NativeBindings.nativeSubmitDataChannelWritable(
+                        handle, operation, channel, timeoutMillis));
+    }
+
+    CompletionStage<Long> dataChannelOutstandingBytesAsync(long channel, long timeoutMillis) {
+        return submit(
+                event -> event.text() == null ? 0L : Long.parseUnsignedLong(event.text()),
+                operation -> NativeBindings.nativeSubmitDataChannelOutstandingBytes(
+                        handle, operation, channel, timeoutMillis));
+    }
+
+    CompletionStage<Void> setDataChannelThresholdsAsync(
+            long channel, long low, long high, long timeoutMillis) {
+        return submit(
+                ignored -> null,
+                operation -> NativeBindings.nativeSubmitSetDataChannelThresholds(
+                        handle, operation, channel, low, high, timeoutMillis));
+    }
+
+    CompletionStage<PeerConnectionStats> getStatsAsync(long peer, long timeoutMillis) {
+        return submit(
+                event -> StatsDecoder.decode(Objects.requireNonNull(event.data(), "native stats")),
+                operation -> NativeBindings.nativeSubmitGetStats(
+                        handle, operation, peer, timeoutMillis));
     }
 
     CompletionStage<Void> closeDataChannelAsync(long channel, long timeoutMillis) {
@@ -493,6 +591,14 @@ public final class WebRtcRuntime implements AutoCloseable {
         int mask = 0;
         for (IceNetworkType type : options.networkTypes()) {
             mask |= 1 << type.ordinal();
+        }
+        return mask;
+    }
+
+    private static int cipherSuiteMask(DtlsOptions options) {
+        int mask = 0;
+        for (DtlsCipherSuite suite : options.cipherSuites()) {
+            mask |= 1 << suite.ordinal();
         }
         return mask;
     }

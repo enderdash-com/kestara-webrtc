@@ -5,7 +5,7 @@ import com.enderdash.kestara.webrtc.internal.NativeBindings;
 /** Provides native library metadata for Kestara WebRTC. */
 public final class KestaraWebRtc {
     /** The native ABI required by this Java API. */
-    public static final int NATIVE_ABI_VERSION = 4;
+    public static final int NATIVE_ABI_VERSION = 5;
 
     static {
         int actualVersion = NativeBindings.abiVersion();

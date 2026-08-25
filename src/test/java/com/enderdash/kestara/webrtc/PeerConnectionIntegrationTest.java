@@ -106,6 +106,25 @@ class PeerConnectionIntegrationTest {
     }
 
     @Test
+    void exportsImportsAndRotatesRuntimeCertificates() throws Exception {
+        DtlsCertificate original;
+        String originalFingerprint;
+        try (WebRtcRuntime runtime = WebRtcRuntime.create()) {
+            original = runtime.certificate();
+            originalFingerprint = runtime.certificateFingerprint();
+            String rotated = runtime.rotateCertificateAsync()
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            assertNotEquals(originalFingerprint, rotated);
+        }
+
+        WebRtcRuntimeOptions options = WebRtcRuntimeOptions.DEFAULT.withCertificate(original);
+        try (WebRtcRuntime runtime = WebRtcRuntime.create(options)) {
+            assertEquals(originalFingerprint, runtime.certificateFingerprint());
+        }
+    }
+
+    @Test
     void retriesActualTransportBindingsAcrossThePortRange() throws Exception {
         try (DatagramSocket reservation = reserveUdpPort()) {
             int reservedPort = reservation.getLocalPort();
@@ -148,11 +167,20 @@ class PeerConnectionIntegrationTest {
                 .withAcceptanceWaits(Duration.ZERO, Duration.ZERO, Duration.ZERO, Duration.ZERO)
                 .withNetworkTypes(Set.of(IceNetworkType.UDP4))
                 .withMdns(IceMdnsMode.DISABLED, Duration.ofSeconds(1))
+                .withIncludeLoopbackCandidate(true)
+                .withCredentials(new IceCredentials(
+                        "kestara-test", "kestara-test-password-123"))
                 .withCandidatePoolSize(1);
         SctpOptions sctp = new SctpOptions(8 * 1024 * 1024, 512 * 1024, 128 * 1024);
         PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
                 .withIceOptions(ice)
-                .withSctpOptions(sctp);
+                .withSctpOptions(sctp)
+                .withDtlsOptions(DtlsOptions.DEFAULT
+                        .withAnsweringRole(DtlsRole.CLIENT)
+                        .withMediaLevelFingerprints(true)
+                        .withReplayProtectionWindow(128))
+                .withTransportOptions(new TransportOptions(
+                        List.of("127.0.0.1"), List.of(), 1_200));
 
         try (WebRtcRuntime runtime = WebRtcRuntime.create();
                 PeerConnection peer = runtime.createPeerConnection(configuration)) {
@@ -175,9 +203,16 @@ class PeerConnectionIntegrationTest {
         PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
                 .withCallbackExecutor(callbacks)
                 .withOperationTimeout(Duration.ofSeconds(5));
-        try (WebRtcRuntime runtime = WebRtcRuntime.create();
+        WebRtcRuntimeOptions runtimeOptions = WebRtcRuntimeOptions.DEFAULT
+                .withReactorThreads(2)
+                .withSharedSockets(new SharedSocketOptions(
+                        List.of("0.0.0.0"), List.of("0.0.0.0"), 0, 0));
+        try (WebRtcRuntime runtime = WebRtcRuntime.create(runtimeOptions);
+                WebRtcRuntime remoteRuntime = WebRtcRuntime.create();
                 PeerConnection offerer = runtime.createPeerConnection(configuration);
-                PeerConnection answerer = runtime.createPeerConnection(configuration)) {
+                PeerConnection idleSharedPeer = runtime.createPeerConnection(configuration);
+                PeerConnection answerer = remoteRuntime.createPeerConnection(configuration)) {
+            assertNotNull(idleSharedPeer);
             CandidateRelay offererCandidates = new CandidateRelay(answerer);
             CandidateRelay answererCandidates = new CandidateRelay(offerer);
             offerer.onLocalCandidate(offererCandidates::accept);
@@ -228,12 +263,24 @@ class PeerConnectionIntegrationTest {
 
             byte[] payload = {1, 3, 3, 7};
             ByteBuffer source = ByteBuffer.wrap(payload);
-            channel.sendAsync(source).toCompletableFuture().get(5, TimeUnit.SECONDS);
+            channel.setBufferedAmountThresholdsAsync(0, 1)
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            assertTrue(channel.trySendAsync(source)
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS));
+            channel.writableAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
 
             assertEquals(0, source.position());
 
             assertTrue(binaryReceived.await(10, TimeUnit.SECONDS), "Binary message was not received");
             assertArrayEquals(payload, received.get());
+            PeerConnectionStats stats = offerer.getStatsAsync()
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            assertTrue(stats.transport().selectedCandidatePair().isPresent());
+            assertFalse(stats.dataChannels().isEmpty());
+            assertEquals(2, runtime.diagnostics().reactorThreads());
         } finally {
             callbacks.shutdownNow();
         }

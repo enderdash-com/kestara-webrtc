@@ -25,6 +25,8 @@ public final class PeerConnectionConfiguration {
     private final IceTransportPolicy iceTransportPolicy;
     private final IceOptions iceOptions;
     private final SctpOptions sctpOptions;
+    private final DtlsOptions dtlsOptions;
+    private final TransportOptions transportOptions;
     private final Executor callbackExecutor;
     private final long operationTimeoutMillis;
 
@@ -37,12 +39,38 @@ public final class PeerConnectionConfiguration {
             SctpOptions sctpOptions,
             Executor callbackExecutor,
             long operationTimeoutMillis) {
+        this(
+                iceServers,
+                minPort,
+                maxPort,
+                iceTransportPolicy,
+                iceOptions,
+                sctpOptions,
+                DtlsOptions.DEFAULT,
+                TransportOptions.DEFAULT,
+                callbackExecutor,
+                operationTimeoutMillis);
+    }
+
+    private PeerConnectionConfiguration(
+            List<IceServer> iceServers,
+            int minPort,
+            int maxPort,
+            IceTransportPolicy iceTransportPolicy,
+            IceOptions iceOptions,
+            SctpOptions sctpOptions,
+            DtlsOptions dtlsOptions,
+            TransportOptions transportOptions,
+            Executor callbackExecutor,
+            long operationTimeoutMillis) {
         this.iceServers = List.copyOf(iceServers);
         this.minPort = minPort;
         this.maxPort = maxPort;
         this.iceTransportPolicy = iceTransportPolicy;
         this.iceOptions = iceOptions;
         this.sctpOptions = sctpOptions;
+        this.dtlsOptions = dtlsOptions;
+        this.transportOptions = transportOptions;
         this.callbackExecutor = callbackExecutor;
         this.operationTimeoutMillis = operationTimeoutMillis;
     }
@@ -99,6 +127,20 @@ public final class PeerConnectionConfiguration {
      */
     public SctpOptions sctpOptions() {
         return sctpOptions;
+    }
+
+    /** Returns the DTLS negotiation options.
+     * @return the DTLS options
+     */
+    public DtlsOptions dtlsOptions() {
+        return dtlsOptions;
+    }
+
+    /** Returns local bind-address and MTU options.
+     * @return the transport options
+     */
+    public TransportOptions transportOptions() {
+        return transportOptions;
     }
 
     /**
@@ -188,6 +230,42 @@ public final class PeerConnectionConfiguration {
                 Objects.requireNonNull(value, "value"), callbackExecutor, operationTimeoutMillis);
     }
 
+    /** Returns a copy with the specified DTLS options.
+     * @param value the DTLS options
+     * @return the updated configuration
+     */
+    public PeerConnectionConfiguration withDtlsOptions(DtlsOptions value) {
+        return new PeerConnectionConfiguration(
+                iceServers,
+                minPort,
+                maxPort,
+                iceTransportPolicy,
+                iceOptions,
+                sctpOptions,
+                Objects.requireNonNull(value, "value"),
+                transportOptions,
+                callbackExecutor,
+                operationTimeoutMillis);
+    }
+
+    /** Returns a copy with the specified transport options.
+     * @param value the transport options
+     * @return the updated configuration
+     */
+    public PeerConnectionConfiguration withTransportOptions(TransportOptions value) {
+        return new PeerConnectionConfiguration(
+                iceServers,
+                minPort,
+                maxPort,
+                iceTransportPolicy,
+                iceOptions,
+                sctpOptions,
+                dtlsOptions,
+                Objects.requireNonNull(value, "value"),
+                callbackExecutor,
+                operationTimeoutMillis);
+    }
+
     /**
      * Returns a copy that sends application callbacks to the specified executor.
      *
@@ -216,7 +294,7 @@ public final class PeerConnectionConfiguration {
                 iceOptions, sctpOptions, callbackExecutor, millis);
     }
 
-    private static PeerConnectionConfiguration copy(
+    private PeerConnectionConfiguration copy(
             List<IceServer> iceServers,
             int minPort,
             int maxPort,
@@ -225,7 +303,16 @@ public final class PeerConnectionConfiguration {
             SctpOptions sctpOptions,
             Executor callbackExecutor,
             long operationTimeoutMillis) {
-        return new PeerConnectionConfiguration(iceServers, minPort, maxPort, iceTransportPolicy,
-                iceOptions, sctpOptions, callbackExecutor, operationTimeoutMillis);
+        return new PeerConnectionConfiguration(
+                iceServers,
+                minPort,
+                maxPort,
+                iceTransportPolicy,
+                iceOptions,
+                sctpOptions,
+                dtlsOptions,
+                transportOptions,
+                callbackExecutor,
+                operationTimeoutMillis);
     }
 }

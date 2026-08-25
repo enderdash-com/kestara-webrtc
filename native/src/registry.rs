@@ -1,7 +1,8 @@
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use bytes::BytesMut;
@@ -9,19 +10,23 @@ use crossbeam_channel::Sender;
 use ice::mdns::MulticastDnsMode;
 use ice::network_type::NetworkType;
 use rtc::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
+use rtc::peer_connection::transport::RTCDtlsRole;
+use rtc::statistics::stats::ice_candidate::RTCIceCandidateStats;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinSet;
 use webrtc::data_channel::{
     DataChannel, DataChannelEvent, RTCDataChannelInit, RTCDataChannelState,
 };
+use webrtc::error::Error;
 use webrtc::peer_connection::{
     CipherSuiteId, PeerConnection as NativePeerConnection, PeerConnectionBuilder,
     PeerConnectionEventHandler, RTCCertificate, RTCConfigurationBuilder, RTCIceCandidateInit,
     RTCIceCandidateType, RTCIceConnectionState, RTCIceGatheringState, RTCIceServer,
     RTCIceTransportPolicy, RTCPeerConnectionIceEvent, RTCPeerConnectionState,
-    RTCSessionDescription, SettingEngine,
+    RTCSessionDescription, RTCStatsReport, RTCStatsReportEntry, SettingEngine, SharedSocketMux,
+    StatsSelector,
 };
-use webrtc::runtime::TokioRuntime;
+use webrtc::runtime::{Runtime, TokioRuntime};
 
 use crate::events::{
     DATA_CHANNEL, DATA_CHANNEL_BINARY, DATA_CHANNEL_CLOSED, DATA_CHANNEL_CLOSING,
@@ -37,6 +42,8 @@ pub struct PeerConfiguration {
     pub relay_only: bool,
     pub ice: IceConfiguration,
     pub sctp: SctpConfiguration,
+    pub dtls: DtlsConfiguration,
+    pub transport: TransportConfiguration,
 }
 
 #[derive(Debug)]
@@ -57,6 +64,25 @@ pub struct IceConfiguration {
     pub nat_mapping: Option<(Vec<String>, RTCIceCandidateType)>,
     pub discard_local_candidates_on_restart: bool,
     pub candidate_pool_size: u8,
+    pub include_loopback_candidate: bool,
+    pub mdns_local_name: Option<String>,
+    pub mdns_local_address: Option<IpAddr>,
+    pub credentials: Option<(String, String)>,
+}
+
+#[derive(Debug)]
+pub struct DtlsConfiguration {
+    pub answering_role: Option<RTCDtlsRole>,
+    pub media_level_fingerprints: bool,
+    pub replay_protection_window: usize,
+    pub cipher_suites: Vec<CipherSuiteId>,
+}
+
+#[derive(Debug)]
+pub struct TransportConfiguration {
+    pub udp_bind_addresses: Vec<String>,
+    pub tcp_bind_addresses: Vec<String>,
+    pub receive_mtu: usize,
 }
 
 #[derive(Debug)]
@@ -96,21 +122,36 @@ pub struct RuntimeState {
     registry: Mutex<Registry>,
     events: Sender<NativeEvent>,
     next_handle: AtomicU64,
-    certificate: RTCCertificate,
+    pub(crate) certificate: Arc<Mutex<RTCCertificate>>,
+    runtime: Arc<TokioRuntime>,
+    socket_mux: Option<Arc<SharedSocketMux>>,
 }
 
 impl RuntimeState {
-    pub fn new(events: Sender<NativeEvent>, certificate: RTCCertificate) -> Self {
+    pub fn new(
+        events: Sender<NativeEvent>,
+        certificate: Arc<Mutex<RTCCertificate>>,
+        runtime: Arc<TokioRuntime>,
+        socket_mux: Option<Arc<SharedSocketMux>>,
+    ) -> Self {
         Self {
             registry: Mutex::new(Registry::default()),
             events,
             next_handle: AtomicU64::new(1),
             certificate,
+            runtime,
+            socket_mux,
         }
     }
 
     pub fn send_event(&self, event: NativeEvent) {
         let _ = self.events.send(event);
+    }
+
+    fn lock_certificate(&self) -> Result<std::sync::MutexGuard<'_, RTCCertificate>, String> {
+        self.certificate
+            .lock()
+            .map_err(|_| "The runtime DTLS certificate lock is poisoned".to_owned())
     }
 
     pub async fn create_peer(
@@ -137,27 +178,30 @@ impl RuntimeState {
         let mut last_error = None;
         let mut peer = None;
         for port in ports {
-            let (udp_addresses, tcp_addresses) =
-                bind_addresses(&configuration.ice.network_types, port);
+            let (udp_addresses, tcp_addresses) = bind_addresses(
+                &configuration.transport,
+                &configuration.ice.network_types,
+                port,
+            );
             let rtc_configuration = RTCConfigurationBuilder::new()
                 .with_ice_servers(configuration.ice_servers.clone())
                 .with_ice_transport_policy(ice_policy)
-                .with_certificates(vec![self.certificate.clone()])
+                .with_certificates(vec![self.lock_certificate()?.clone()])
                 .with_ice_candidate_pool_size(configuration.ice.candidate_pool_size)
                 .build();
-            match Box::pin(
-                PeerConnectionBuilder::new()
-                    .with_configuration(rtc_configuration)
-                    .with_setting_engine(setting_engine.clone())
-                    .with_handler(handler.clone())
-                    .with_runtime(Arc::new(TokioRuntime))
-                    .with_udp_addrs(udp_addresses)
-                    .with_tcp_addrs(tcp_addresses)
-                    .with_data_channel_send_buffer_limit(configuration.sctp.send_buffer_limit)
-                    .build(),
-            )
-            .await
-            {
+            let mut builder = PeerConnectionBuilder::new()
+                .with_configuration(rtc_configuration)
+                .with_setting_engine(setting_engine.clone())
+                .with_handler(handler.clone())
+                .with_runtime(Arc::clone(&self.runtime) as Arc<dyn Runtime>)
+                .with_udp_addrs(udp_addresses)
+                .with_tcp_addrs(tcp_addresses)
+                .with_dedicated_reactor_thread(true)
+                .with_data_channel_send_buffer_limit(configuration.sctp.send_buffer_limit);
+            if let Some(socket_mux) = &self.socket_mux {
+                builder = builder.with_socket_mux(Arc::clone(socket_mux));
+            }
+            match Box::pin(builder.build()).await {
                 Ok(connection) => {
                     peer = Some(Arc::new(connection) as Arc<dyn NativePeerConnection>);
                     break;
@@ -329,6 +373,73 @@ impl RuntimeState {
             .send(BytesMut::from(data.as_slice()))
             .await
             .map_err(|error| format!("Failed to send DataChannel data: {error}"))
+    }
+
+    pub async fn try_send_text(&self, channel_handle: u64, text: String) -> Result<bool, String> {
+        let (channel, _) = self.get_channel(channel_handle)?;
+        match channel.try_send_text(&text).await {
+            Ok(()) => Ok(true),
+            Err(Error::ErrSendBufferFull) => Ok(false),
+            Err(error) => Err(format!("Failed to send DataChannel text: {error}")),
+        }
+    }
+
+    pub async fn try_send_binary(
+        &self,
+        channel_handle: u64,
+        data: Vec<u8>,
+    ) -> Result<bool, String> {
+        let (channel, _) = self.get_channel(channel_handle)?;
+        match channel.try_send(BytesMut::from(data.as_slice())).await {
+            Ok(()) => Ok(true),
+            Err(Error::ErrSendBufferFull) => Ok(false),
+            Err(error) => Err(format!("Failed to send DataChannel data: {error}")),
+        }
+    }
+
+    pub async fn data_channel_writable(&self, channel_handle: u64) -> Result<(), String> {
+        let (channel, _) = self.get_channel(channel_handle)?;
+        channel
+            .writable()
+            .await
+            .map_err(|error| format!("DataChannel cannot become writable: {error}"))
+    }
+
+    pub async fn data_channel_outstanding_bytes(&self, channel_handle: u64) -> Result<u64, String> {
+        let (channel, _) = self.get_channel(channel_handle)?;
+        channel
+            .outstanding_bytes()
+            .await
+            .map(|value| u64::try_from(value).unwrap_or(u64::MAX))
+            .map_err(|error| format!("Failed to read DataChannel outstanding bytes: {error}"))
+    }
+
+    pub async fn set_data_channel_thresholds(
+        &self,
+        channel_handle: u64,
+        low: u32,
+        high: u32,
+    ) -> Result<(), String> {
+        let (channel, _) = self.get_channel(channel_handle)?;
+        channel
+            .set_buffered_amount_low_threshold(low)
+            .await
+            .map_err(|error| format!("Failed to set DataChannel low threshold: {error}"))?;
+        channel
+            .set_buffered_amount_high_threshold(high)
+            .await
+            .map_err(|error| format!("Failed to set DataChannel high threshold: {error}"))?;
+        Ok(())
+    }
+
+    pub async fn get_stats(&self, peer_handle: u64) -> Result<Vec<u8>, String> {
+        let peer = self.get_peer(peer_handle)?;
+        let _operation = peer.operations.lock().await;
+        let report = peer
+            .peer
+            .get_stats(Instant::now(), StatsSelector::None)
+            .await;
+        encode_stats(&report)
     }
 
     pub async fn close_data_channel(&self, channel_handle: u64) -> Result<(), String> {
@@ -577,7 +688,16 @@ async fn poll_data_channel(
                 data: Some(message.data.to_vec()),
                 ..NativeEvent::channel(DATA_CHANNEL_BINARY, peer_handle, channel_handle)
             }),
-            DataChannelEvent::OnBufferedAmountLow | DataChannelEvent::OnBufferedAmountHigh => {}
+            DataChannelEvent::OnBufferedAmountLow => runtime.send_event(NativeEvent::channel(
+                crate::events::DATA_CHANNEL_BUFFERED_AMOUNT_LOW,
+                peer_handle,
+                channel_handle,
+            )),
+            DataChannelEvent::OnBufferedAmountHigh => runtime.send_event(NativeEvent::channel(
+                crate::events::DATA_CHANNEL_BUFFERED_AMOUNT_HIGH,
+                peer_handle,
+                channel_handle,
+            )),
         }
     }
     if let Some(runtime) = runtime.upgrade()
@@ -587,31 +707,56 @@ async fn poll_data_channel(
     }
 }
 
-fn bind_addresses(network_types: &[NetworkType], port: u16) -> (Vec<String>, Vec<String>) {
-    let mut udp = Vec::new();
-    let mut tcp = Vec::new();
-    for network_type in network_types {
-        let (target, address) = match network_type {
-            NetworkType::Unspecified => continue,
-            NetworkType::Udp4 => (&mut udp, format!("0.0.0.0:{port}")),
-            NetworkType::Udp6 => (&mut udp, format!("[::]:{port}")),
-            NetworkType::Tcp4 => (&mut tcp, format!("0.0.0.0:{port}")),
-            NetworkType::Tcp6 => (&mut tcp, format!("[::]:{port}")),
-        };
-        if !target.contains(&address) {
-            target.push(address);
+fn bind_addresses(
+    configuration: &TransportConfiguration,
+    network_types: &[NetworkType],
+    port: u16,
+) -> (Vec<String>, Vec<String>) {
+    if configuration.udp_bind_addresses.is_empty() && configuration.tcp_bind_addresses.is_empty() {
+        let mut udp = Vec::new();
+        let mut tcp = Vec::new();
+        for network_type in network_types {
+            let (target, address) = match network_type {
+                NetworkType::Unspecified => continue,
+                NetworkType::Udp4 => (&mut udp, format!("0.0.0.0:{port}")),
+                NetworkType::Udp6 => (&mut udp, format!("[::]:{port}")),
+                NetworkType::Tcp4 => (&mut tcp, format!("0.0.0.0:{port}")),
+                NetworkType::Tcp6 => (&mut tcp, format!("[::]:{port}")),
+            };
+            if !target.contains(&address) {
+                target.push(address);
+            }
         }
+        return (udp, tcp);
     }
-    (udp, tcp)
+    let append_port = |address: &String| match address.parse::<IpAddr>() {
+        Ok(IpAddr::V4(_)) => format!("{address}:{port}"),
+        Ok(IpAddr::V6(_)) => format!("[{address}]:{port}"),
+        Err(_) => address.clone(),
+    };
+    (
+        configuration
+            .udp_bind_addresses
+            .iter()
+            .map(append_port)
+            .collect(),
+        configuration
+            .tcp_bind_addresses
+            .iter()
+            .map(append_port)
+            .collect(),
+    )
 }
 
 fn setting_engine(configuration: &PeerConfiguration) -> SettingEngine {
     let mut engine = SettingEngine::default();
-    engine.set_dtls_cipher_suites(vec![
-        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
-        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256,
-        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha,
-    ]);
+    engine.set_dtls_cipher_suites(configuration.dtls.cipher_suites.clone());
+    if let Some(role) = configuration.dtls.answering_role {
+        let _ = engine.set_answering_dtls_role(role);
+    }
+    engine.set_sdp_media_level_fingerprints(configuration.dtls.media_level_fingerprints);
+    engine.set_dtls_replay_protection_window(configuration.dtls.replay_protection_window);
+    engine.set_receive_mtu(configuration.transport.receive_mtu);
     engine.set_ice_timeouts(
         configuration.ice.disconnected_timeout,
         configuration.ice.failed_timeout,
@@ -627,6 +772,14 @@ fn setting_engine(configuration: &PeerConfiguration) -> SettingEngine {
     engine.set_relay_acceptance_min_wait(configuration.ice.relay_acceptance_min_wait);
     engine.set_network_types(configuration.ice.network_types.clone());
     engine.set_multicast_dns_mode(configuration.ice.mdns_mode);
+    engine.set_include_loopback_candidate(configuration.ice.include_loopback_candidate);
+    if let Some(name) = &configuration.ice.mdns_local_name {
+        engine.set_multicast_dns_local_name(name.clone());
+    }
+    engine.set_multicast_dns_local_ip(configuration.ice.mdns_local_address);
+    if let Some((username_fragment, password)) = &configuration.ice.credentials {
+        engine.set_ice_credentials(username_fragment.clone(), password.clone());
+    }
     if configuration.ice.mdns_query_timeout.is_some() {
         engine.set_multicast_dns_timeout(configuration.ice.mdns_query_timeout);
     }
@@ -642,6 +795,142 @@ fn setting_engine(configuration: &PeerConfiguration) -> SettingEngine {
     ));
     engine.set_sctp_max_receive_buffer_size(configuration.sctp.receive_buffer_size);
     engine
+}
+
+fn encode_stats(report: &RTCStatsReport) -> Result<Vec<u8>, String> {
+    let peer = report
+        .peer_connection()
+        .ok_or_else(|| "The native stats report has no peer connection entry".to_owned())?;
+    let transport = report
+        .transport()
+        .ok_or_else(|| "The native stats report has no transport entry".to_owned())?;
+    let mut output = Vec::with_capacity(512);
+    write_u32(&mut output, 1);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| format!("The system clock is before the Unix epoch: {error}"))?
+        .as_millis();
+    write_u64(&mut output, u64::try_from(timestamp).unwrap_or(u64::MAX));
+    write_u64(&mut output, u64::from(peer.data_channels_opened));
+    write_u64(&mut output, u64::from(peer.data_channels_closed));
+    write_u64(&mut output, transport.packets_sent);
+    write_u64(&mut output, transport.packets_received);
+    write_u64(&mut output, transport.bytes_sent);
+    write_u64(&mut output, transport.bytes_received);
+    write_string(&mut output, &format!("{:?}", transport.ice_role))?;
+    write_string(&mut output, &format!("{:?}", transport.ice_state))?;
+    write_string(&mut output, &format!("{:?}", transport.dtls_role))?;
+    write_string(&mut output, &format!("{:?}", transport.dtls_state))?;
+    write_string(&mut output, &transport.tls_version)?;
+    write_string(&mut output, &transport.dtls_cipher)?;
+    write_u32(&mut output, transport.selected_candidate_pair_changes);
+
+    if let Some(RTCStatsReportEntry::IceCandidatePair(pair)) =
+        report.get(&transport.selected_candidate_pair_id)
+    {
+        let local = candidate(report, &pair.local_candidate_id)?;
+        let remote = candidate(report, &pair.remote_candidate_id)?;
+        output.push(1);
+        write_string(&mut output, &pair.stats.id)?;
+        write_candidate(&mut output, local)?;
+        write_candidate(&mut output, remote)?;
+        write_u64(&mut output, pair.packets_sent);
+        write_u64(&mut output, pair.packets_received);
+        write_u64(&mut output, pair.bytes_sent);
+        write_u64(&mut output, pair.bytes_received);
+        write_f64(&mut output, pair.current_round_trip_time);
+        write_f64(&mut output, pair.total_round_trip_time);
+        write_u64(&mut output, pair.requests_sent);
+        write_u64(&mut output, pair.requests_received);
+        write_u64(&mut output, pair.responses_sent);
+        write_u64(&mut output, pair.responses_received);
+        write_string(&mut output, &format!("{:?}", pair.state))?;
+        output.push(u8::from(pair.nominated));
+    } else {
+        output.push(0);
+    }
+
+    let channels = report
+        .iter()
+        .filter_map(|entry| match entry {
+            RTCStatsReportEntry::DataChannel(channel) => Some(channel),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    write_u32(
+        &mut output,
+        u32::try_from(channels.len())
+            .map_err(|_| "Too many DataChannel stats entries".to_owned())?,
+    );
+    for channel in channels {
+        output.extend_from_slice(&channel.data_channel_identifier.to_be_bytes());
+        write_string(&mut output, &channel.label)?;
+        write_string(&mut output, &channel.protocol)?;
+        write_string(&mut output, &format!("{:?}", channel.state))?;
+        write_u32(&mut output, channel.messages_sent);
+        write_u64(&mut output, channel.bytes_sent);
+        write_u32(&mut output, channel.messages_received);
+        write_u64(&mut output, channel.bytes_received);
+    }
+    Ok(output)
+}
+
+fn candidate<'a>(report: &'a RTCStatsReport, id: &str) -> Result<&'a RTCIceCandidateStats, String> {
+    if let Some(
+        RTCStatsReportEntry::LocalCandidate(candidate)
+        | RTCStatsReportEntry::RemoteCandidate(candidate),
+    ) = report.get(id)
+    {
+        return Ok(candidate);
+    }
+    report
+        .iter()
+        .find_map(|entry| match entry {
+            RTCStatsReportEntry::LocalCandidate(candidate)
+            | RTCStatsReportEntry::RemoteCandidate(candidate)
+                if candidate.stats.id.ends_with(id) =>
+            {
+                Some(candidate)
+            }
+            _ => None,
+        })
+        .ok_or_else(|| format!("The native stats report is missing ICE candidate {id}"))
+}
+
+fn write_candidate(output: &mut Vec<u8>, candidate: &RTCIceCandidateStats) -> Result<(), String> {
+    write_string(output, &candidate.stats.id)?;
+    write_string(output, candidate.address.as_deref().unwrap_or_default())?;
+    output.extend_from_slice(&candidate.port.to_be_bytes());
+    write_string(output, &candidate.protocol)?;
+    write_string(output, &format!("{:?}", candidate.candidate_type))?;
+    write_u32(output, u32::from(candidate.priority));
+    write_string(output, &candidate.url)?;
+    write_string(output, &format!("{:?}", candidate.relay_protocol))?;
+    write_string(output, &candidate.foundation)?;
+    write_string(output, &candidate.related_address)?;
+    output.extend_from_slice(&candidate.related_port.to_be_bytes());
+    write_string(output, &candidate.username_fragment)?;
+    write_string(output, &format!("{:?}", candidate.tcp_type))
+}
+
+fn write_string(output: &mut Vec<u8>, value: &str) -> Result<(), String> {
+    let size =
+        u32::try_from(value.len()).map_err(|_| "Native stats string is too large".to_owned())?;
+    write_u32(output, size);
+    output.extend_from_slice(value.as_bytes());
+    Ok(())
+}
+
+fn write_u32(output: &mut Vec<u8>, value: u32) {
+    output.extend_from_slice(&value.to_be_bytes());
+}
+
+fn write_u64(output: &mut Vec<u8>, value: u64) {
+    output.extend_from_slice(&value.to_be_bytes());
+}
+
+fn write_f64(output: &mut Vec<u8>, value: f64) {
+    output.extend_from_slice(&value.to_be_bytes());
 }
 
 fn peer_state_number(state: RTCPeerConnectionState) -> i32 {
@@ -681,7 +970,13 @@ mod tests {
 
     #[test]
     fn creates_bind_addresses_for_selected_network_types() {
+        let transport = super::TransportConfiguration {
+            udp_bind_addresses: Vec::new(),
+            tcp_bind_addresses: Vec::new(),
+            receive_mtu: 0,
+        };
         let (udp, tcp) = super::bind_addresses(
+            &transport,
             &[NetworkType::Udp4, NetworkType::Udp6, NetworkType::Tcp4],
             10_000,
         );

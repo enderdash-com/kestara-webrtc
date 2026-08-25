@@ -46,13 +46,22 @@ class PeerConnectionConfigurationTest {
         SctpOptions sctp = SctpOptions.DEFAULT
                 .withReceiveBufferSize(512 * 1024)
                 .withMaximumMessageSize(128 * 1024);
+        DtlsOptions dtls = DtlsOptions.DEFAULT
+                .withAnsweringRole(DtlsRole.CLIENT)
+                .withMediaLevelFingerprints(true)
+                .withReplayProtectionWindow(128);
+        TransportOptions transport = TransportOptions.DEFAULT.withReceiveMtu(1_200);
 
         PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
                 .withIceOptions(ice)
-                .withSctpOptions(sctp);
+                .withSctpOptions(sctp)
+                .withDtlsOptions(dtls)
+                .withTransportOptions(transport);
 
         assertEquals(ice, configuration.iceOptions());
         assertEquals(sctp, configuration.sctpOptions());
+        assertEquals(dtls, configuration.dtlsOptions());
+        assertEquals(transport, configuration.transportOptions());
         assertEquals(9, ice.maxBindingRequests().orElseThrow());
         assertEquals(Set.of(IceNetworkType.UDP4, IceNetworkType.TCP4), ice.networkTypes());
     }

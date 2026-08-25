@@ -11,6 +11,7 @@ import java.util.function.Consumer;
 
 /** A bidirectional WebRTC DataChannel. */
 public final class DataChannel implements AutoCloseable {
+    private static final long MAX_UNSIGNED_INT = 0xffff_ffffL;
     private static final Runnable NOOP = () -> {};
     private static final Consumer<String> NOOP_ERROR = ignored -> {};
     private static final DataChannelMessageHandler NOOP_MESSAGE = new DataChannelMessageHandler() {};
@@ -31,6 +32,8 @@ public final class DataChannel implements AutoCloseable {
     private volatile Runnable onOpen = NOOP;
     private volatile Runnable onClosing = NOOP;
     private volatile Runnable onClosed = NOOP;
+    private volatile Runnable onBufferedAmountLow = NOOP;
+    private volatile Runnable onBufferedAmountHigh = NOOP;
     private volatile Consumer<String> onError = NOOP_ERROR;
     private volatile DataChannelMessageHandler onMessage = NOOP_MESSAGE;
 
@@ -128,6 +131,24 @@ public final class DataChannel implements AutoCloseable {
     }
 
     /**
+     * Sets the callback fired when queued bytes cross the low threshold.
+     *
+     * @param callback the callback
+     */
+    public void onBufferedAmountLow(Runnable callback) {
+        onBufferedAmountLow = Objects.requireNonNull(callback, "callback");
+    }
+
+    /**
+     * Sets the callback fired when queued bytes cross the high threshold.
+     *
+     * @param callback the callback
+     */
+    public void onBufferedAmountHigh(Runnable callback) {
+        onBufferedAmountHigh = Objects.requireNonNull(callback, "callback");
+    }
+
+    /**
      * Sets the channel-error callback.
      *
      * @param callback the callback
@@ -211,6 +232,133 @@ public final class DataChannel implements AutoCloseable {
     }
 
     /**
+     * Attempts to queue text without waiting for send-buffer capacity.
+     *
+     * @param text the text
+     * @return {@code false} when the send buffer is full
+     */
+    public CompletionStage<Boolean> trySendAsync(String text) {
+        Objects.requireNonNull(text, "text");
+        requireOpen();
+        return runtime.trySendTextAsync(handle, text, operationTimeoutMillis);
+    }
+
+    /**
+     * Attempts to queue binary data without waiting for send-buffer capacity.
+     *
+     * @param data the data
+     * @return {@code false} when the send buffer is full
+     */
+    public CompletionStage<Boolean> trySendAsync(byte[] data) {
+        Objects.requireNonNull(data, "data");
+        requireOpen();
+        return runtime.trySendBinaryAsync(handle, data.clone(), operationTimeoutMillis);
+    }
+
+    /**
+     * Attempts to queue the remaining buffer bytes without waiting for capacity.
+     *
+     * @param data the source buffer
+     * @return {@code false} when the send buffer is full
+     */
+    public CompletionStage<Boolean> trySendAsync(ByteBuffer data) {
+        Objects.requireNonNull(data, "data");
+        byte[] copy = new byte[data.remaining()];
+        data.duplicate().get(copy);
+        return trySendAsync(copy);
+    }
+
+    /**
+     * Attempts to queue text without waiting for send-buffer capacity.
+     *
+     * @param text the text
+     * @return {@code false} when the send buffer is full
+     */
+    public boolean trySend(String text) {
+        return runtime.await(trySendAsync(text), operationTimeoutMillis);
+    }
+
+    /**
+     * Attempts to queue binary data without waiting for send-buffer capacity.
+     *
+     * @param data the data
+     * @return {@code false} when the send buffer is full
+     */
+    public boolean trySend(byte[] data) {
+        return runtime.await(trySendAsync(data), operationTimeoutMillis);
+    }
+
+    /**
+     * Attempts to queue the remaining buffer bytes without waiting for capacity.
+     *
+     * @param data the source buffer
+     * @return {@code false} when the send buffer is full
+     */
+    public boolean trySend(ByteBuffer data) {
+        return runtime.await(trySendAsync(data), operationTimeoutMillis);
+    }
+
+    /**
+     * Completes when the channel has send-buffer capacity.
+     *
+     * @return the writable stage
+     */
+    public CompletionStage<Void> writableAsync() {
+        requireOpen();
+        return runtime.dataChannelWritableAsync(handle, operationTimeoutMillis);
+    }
+
+    /** Waits until the channel has send-buffer capacity. */
+    public void writable() {
+        runtime.await(writableAsync(), operationTimeoutMillis);
+    }
+
+    /**
+     * Returns the number of bytes queued for SCTP acknowledgement.
+     *
+     * @return the outstanding-byte stage
+     */
+    public CompletionStage<Long> outstandingBytesAsync() {
+        return runtime.dataChannelOutstandingBytesAsync(handle, operationTimeoutMillis);
+    }
+
+    /**
+     * Returns the number of bytes queued for SCTP acknowledgement.
+     *
+     * @return the outstanding byte count
+     */
+    public long outstandingBytes() {
+        return runtime.await(outstandingBytesAsync(), operationTimeoutMillis);
+    }
+
+    /**
+     * Sets the low and high buffered-amount event thresholds.
+     *
+     * @param low the low threshold in bytes
+     * @param high the high threshold in bytes
+     * @return the update stage
+     */
+    public CompletionStage<Void> setBufferedAmountThresholdsAsync(long low, long high) {
+        requireOpen();
+        if (low < 0 || high < 0 || low > high || high > MAX_UNSIGNED_INT) {
+            throw new IllegalArgumentException(
+                    "Buffered amount thresholds must satisfy 0 <= low <= high <= 4294967295");
+        }
+        return runtime.setDataChannelThresholdsAsync(
+                handle, low, high, operationTimeoutMillis);
+    }
+
+    /**
+     * Sets the low and high buffered-amount event thresholds.
+     *
+     * @param low the low threshold in bytes
+     * @param high the high threshold in bytes
+     */
+    public void setBufferedAmountThresholds(long low, long high) {
+        runtime.await(setBufferedAmountThresholdsAsync(low, high), operationTimeoutMillis);
+    }
+
+    /**
      * Starts closing the channel without blocking the caller.
      *
      * @return the shared close stage
@@ -262,6 +410,10 @@ public final class DataChannel implements AutoCloseable {
                 ByteBuffer buffer = ByteBuffer.wrap(payload).asReadOnlyBuffer();
                 callbackExecutor.execute(() -> onMessage.onBinary(buffer));
             }
+            case NativeBindings.EVENT_DATA_CHANNEL_BUFFERED_AMOUNT_LOW ->
+                    callbackExecutor.execute(onBufferedAmountLow);
+            case NativeBindings.EVENT_DATA_CHANNEL_BUFFERED_AMOUNT_HIGH ->
+                    callbackExecutor.execute(onBufferedAmountHigh);
             default -> throw new IllegalArgumentException(
                     "Unsupported DataChannel event: " + event.kind());
         }

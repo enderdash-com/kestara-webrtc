@@ -1,3 +1,4 @@
+use std::net::IpAddr;
 use std::time::Duration;
 
 use ice::mdns::MulticastDnsMode;
@@ -7,15 +8,17 @@ use jni::objects::{JByteArray, JClass, JObject, JObjectArray, JString, JValue};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 use jni::{Env, EnvUnowned, jni_sig, jni_str};
+use rtc::peer_connection::transport::RTCDtlsRole;
 use webrtc::peer_connection::{
-    RTCIceCandidateInit, RTCIceCandidateType, RTCIceServer, RTCSessionDescription,
+    CipherSuiteId, RTCIceCandidateInit, RTCIceCandidateType, RTCIceServer, RTCSessionDescription,
 };
 
 use crate::NATIVE_ABI_VERSION;
 use crate::registry::{
-    DataChannelConfiguration, IceConfiguration, PeerConfiguration, SctpConfiguration,
+    DataChannelConfiguration, DtlsConfiguration, IceConfiguration, PeerConfiguration,
+    SctpConfiguration, TransportConfiguration,
 };
-use crate::runtime::{self, Command};
+use crate::runtime::{self, Command, RuntimeConfiguration};
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeAbiVersion(
@@ -46,6 +49,26 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeRuntimeCertificatePem(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+) -> jstring {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<jstring> {
+            let result = handle_from_jlong(runtime_handle)
+                .and_then(runtime::certificate_pem)
+                .and_then(|pem| {
+                    env.new_string(pem)
+                        .map(JString::into_raw)
+                        .map_err(|error| error.to_string())
+                });
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeLibraryVersion(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
@@ -62,13 +85,41 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     worker_threads: jint,
+    reactor_threads: jint,
+    certificate_pem: JString<'_>,
+    shared_udp_addresses: JObjectArray<'_, JString<'_>>,
+    shared_tcp_addresses: JObjectArray<'_, JString<'_>>,
+    shared_min_port: jint,
+    shared_max_port: jint,
 ) -> jlong {
     unowned_env
         .with_env(|env| -> jni::errors::Result<jlong> {
-            let result = usize::try_from(worker_threads)
-                .map_err(|_| "The worker thread count must not be negative".to_owned())
-                .and_then(runtime::create)
-                .and_then(handle_to_jlong);
+            let certificate_pem = read_string(env, &certificate_pem)?;
+            let shared_udp_addresses = read_string_array(env, &shared_udp_addresses)?;
+            let shared_tcp_addresses = read_string_array(env, &shared_tcp_addresses)?;
+            let result = (|| {
+                let worker_threads = usize::try_from(worker_threads)
+                    .map_err(|_| "The worker thread count must not be negative".to_owned())?;
+                let reactor_threads = usize::try_from(reactor_threads)
+                    .map_err(|_| "The reactor thread count must not be negative".to_owned())?;
+                let shared_min_port = port(shared_min_port, "shared minimum")?;
+                let shared_max_port = port(shared_max_port, "shared maximum")?;
+                if (shared_min_port == 0) != (shared_max_port == 0)
+                    || shared_min_port > shared_max_port
+                {
+                    return Err("Invalid shared socket port range".to_owned());
+                }
+                runtime::create(RuntimeConfiguration {
+                    worker_threads,
+                    reactor_threads,
+                    certificate_pem: (!certificate_pem.is_empty()).then_some(certificate_pem),
+                    shared_udp_addresses,
+                    shared_tcp_addresses,
+                    shared_min_port,
+                    shared_max_port,
+                })
+            })()
+            .and_then(handle_to_jlong);
             operation_result(env, result)
         })
         .resolve::<ThrowRuntimeExAndDefault>()
@@ -104,9 +155,21 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
     nat_mapping_type: jint,
     discard_local_candidates_on_restart: jboolean,
     candidate_pool_size: jint,
+    include_loopback_candidate: jboolean,
+    mdns_local_name: JString<'_>,
+    mdns_local_address: JString<'_>,
+    ice_username_fragment: JString<'_>,
+    ice_password: JString<'_>,
     sctp_send_buffer_limit: jint,
     sctp_receive_buffer_size: jint,
     sctp_maximum_message_size: jint,
+    dtls_answering_role: jint,
+    media_level_fingerprints: jboolean,
+    dtls_replay_protection_window: jint,
+    dtls_cipher_suite_mask: jint,
+    udp_bind_addresses: JObjectArray<'_, JString<'_>>,
+    tcp_bind_addresses: JObjectArray<'_, JString<'_>>,
+    receive_mtu: jint,
     timeout_millis: jlong,
 ) {
     unowned_env
@@ -115,6 +178,12 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
             let usernames = read_string_array(env, &usernames)?;
             let credentials = read_string_array(env, &credentials)?;
             let nat_addresses = read_string_array(env, &nat_addresses)?;
+            let mdns_local_name = read_string(env, &mdns_local_name)?;
+            let mdns_local_address = read_string(env, &mdns_local_address)?;
+            let ice_username_fragment = read_string(env, &ice_username_fragment)?;
+            let ice_password = read_string(env, &ice_password)?;
+            let udp_bind_addresses = read_string_array(env, &udp_bind_addresses)?;
+            let tcp_bind_addresses = read_string_array(env, &tcp_bind_addresses)?;
             let result = (|| {
                 let runtime_handle = handle_from_jlong(runtime_handle)?;
                 let operation_handle = handle_from_jlong(operation_handle)?;
@@ -161,6 +230,37 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                     );
                 }
                 let timeout = timeout(timeout_millis)?;
+                let answering_role = match dtls_answering_role {
+                    0 => None,
+                    1 => Some(RTCDtlsRole::Client),
+                    2 => Some(RTCDtlsRole::Server),
+                    _ => return Err("Invalid DTLS answering role".to_owned()),
+                };
+                let replay_protection_window = usize::try_from(dtls_replay_protection_window)
+                    .map_err(|_| "DTLS replay protection window must be positive".to_owned())?;
+                if replay_protection_window == 0 {
+                    return Err("DTLS replay protection window must be positive".to_owned());
+                }
+                let receive_mtu = usize::try_from(receive_mtu)
+                    .map_err(|_| "Receive MTU must not be negative".to_owned())?;
+                let mdns_local_address = if mdns_local_address.is_empty() {
+                    None
+                } else {
+                    Some(
+                        mdns_local_address
+                            .parse::<IpAddr>()
+                            .map_err(|error| format!("Invalid mDNS local address: {error}"))?,
+                    )
+                };
+                let ice_credentials =
+                    match (ice_username_fragment.is_empty(), ice_password.is_empty()) {
+                        (true, true) => None,
+                        (false, false) => Some((ice_username_fragment, ice_password)),
+                        _ => {
+                            return Err("ICE username fragment and password must be set together"
+                                .to_owned());
+                        }
+                    };
                 let ice_servers = urls
                     .into_iter()
                     .zip(usernames)
@@ -236,6 +336,11 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                                         );
                                     }
                                 },
+                                include_loopback_candidate,
+                                mdns_local_name: (!mdns_local_name.is_empty())
+                                    .then_some(mdns_local_name),
+                                mdns_local_address,
+                                credentials: ice_credentials,
                             },
                             sctp: SctpConfiguration {
                                 send_buffer_limit: usize::try_from(sctp_send_buffer_limit)
@@ -244,6 +349,17 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                                     })?,
                                 receive_buffer_size: sctp_receive_buffer_size,
                                 maximum_message_size: sctp_maximum_message_size,
+                            },
+                            dtls: DtlsConfiguration {
+                                answering_role,
+                                media_level_fingerprints,
+                                replay_protection_window,
+                                cipher_suites: cipher_suites(dtls_cipher_suite_mask)?,
+                            },
+                            transport: TransportConfiguration {
+                                udp_bind_addresses,
+                                tcp_bind_addresses,
+                                receive_mtu,
                             },
                         },
                     },
@@ -561,6 +677,201 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 }
 
 #[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitTrySendDataChannelText(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    channel_handle: jlong,
+    text: JString<'_>,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let text = read_string(env, &text)?;
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::TrySendText {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        channel_handle: handle_from_jlong(channel_handle)?,
+                        text,
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitTrySendDataChannelBinary(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    channel_handle: jlong,
+    data: JByteArray<'_>,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let data = env.convert_byte_array(&data)?;
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::TrySendBinary {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        channel_handle: handle_from_jlong(channel_handle)?,
+                        data,
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitDataChannelWritable(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    channel_handle: jlong,
+    timeout_millis: jlong,
+) {
+    submit_simple_channel_command(
+        &mut unowned_env,
+        runtime_handle,
+        operation_handle,
+        channel_handle,
+        timeout_millis,
+        |operation_handle, timeout, channel_handle| Command::DataChannelWritable {
+            operation_handle,
+            timeout,
+            channel_handle,
+        },
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitDataChannelOutstandingBytes(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    channel_handle: jlong,
+    timeout_millis: jlong,
+) {
+    submit_simple_channel_command(
+        &mut unowned_env,
+        runtime_handle,
+        operation_handle,
+        channel_handle,
+        timeout_millis,
+        |operation_handle, timeout, channel_handle| Command::DataChannelOutstandingBytes {
+            operation_handle,
+            timeout,
+            channel_handle,
+        },
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitSetDataChannelThresholds(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    channel_handle: jlong,
+    low: jlong,
+    high: jlong,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let result = (|| {
+                let low = u32::try_from(low)
+                    .map_err(|_| "Low buffered amount threshold must not be negative".to_owned())?;
+                let high = u32::try_from(high).map_err(|_| {
+                    "High buffered amount threshold must not be negative".to_owned()
+                })?;
+                if low > high {
+                    return Err("Low buffered amount threshold must not exceed high".to_owned());
+                }
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::SetDataChannelThresholds {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        channel_handle: handle_from_jlong(channel_handle)?,
+                        low,
+                        high,
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitGetStats(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    peer_handle: jlong,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::GetStats {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        peer_handle: handle_from_jlong(peer_handle)?,
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitRotateCertificate(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    certificate_pem: JString<'_>,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let pem = read_string(env, &certificate_pem)?;
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::RotateCertificate {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        pem: (!pem.is_empty()).then_some(pem),
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitCloseDataChannel(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
@@ -749,6 +1060,31 @@ fn submit_description(
         .resolve::<ThrowRuntimeExAndDefault>();
 }
 
+fn submit_simple_channel_command(
+    unowned_env: &mut EnvUnowned<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    channel_handle: jlong,
+    timeout_millis: jlong,
+    command: impl FnOnce(u64, Duration, u64) -> Command,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    command(
+                        handle_from_jlong(operation_handle)?,
+                        timeout(timeout_millis)?,
+                        handle_from_jlong(channel_handle)?,
+                    ),
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
 fn read_string(env: &Env<'_>, value: &JString<'_>) -> jni::errors::Result<String> {
     value.try_to_string(env)
 }
@@ -858,6 +1194,27 @@ fn network_types(mask: jint) -> Result<Vec<NetworkType>, String> {
         values.push(NetworkType::Tcp6);
     }
     Ok(values)
+}
+
+fn cipher_suites(mask: jint) -> Result<Vec<CipherSuiteId>, String> {
+    if mask <= 0 || mask & !0xff != 0 {
+        return Err("Invalid DTLS cipher suite mask".to_owned());
+    }
+    let all = [
+        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Ccm,
+        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Ccm_8,
+        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
+        CipherSuiteId::Tls_Ecdhe_Rsa_With_Aes_128_Gcm_Sha256,
+        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha,
+        CipherSuiteId::Tls_Ecdhe_Rsa_With_Aes_256_Cbc_Sha,
+        CipherSuiteId::Tls_Ecdhe_Rsa_With_ChaCha20_Poly1305_Sha256,
+        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256,
+    ];
+    Ok(all
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, suite)| (mask & (1 << index) != 0).then_some(suite))
+        .collect())
 }
 
 fn port(value: jint, name: &str) -> Result<u16, String> {
