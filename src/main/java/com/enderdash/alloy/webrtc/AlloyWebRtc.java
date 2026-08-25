@@ -5,7 +5,7 @@ import com.enderdash.alloy.webrtc.internal.NativeBindings;
 /** Provides metadata and entry points for Alloy WebRTC. */
 public final class AlloyWebRtc {
     /** The native ABI required by this Java API. */
-    public static final int NATIVE_ABI_VERSION = 1;
+    public static final int NATIVE_ABI_VERSION = 2;
 
     static {
         int actualVersion = NativeBindings.abiVersion();
@@ -36,5 +36,33 @@ public final class AlloyWebRtc {
      */
     public static String nativeLibraryVersion() {
         return NativeBindings.libraryVersion();
+    }
+
+    /** Closes all peers, stops event dispatch, and releases the native runtime. */
+    public static void shutdown() {
+        NativeEventDispatcher.closeAll();
+        RuntimeException failure = null;
+        try {
+            NativeEventDispatcher.stop();
+        } catch (RuntimeException error) {
+            failure = addFailure(failure, error);
+        }
+        try {
+            NativeBindings.shutdown();
+        } catch (RuntimeException error) {
+            failure = addFailure(failure, error);
+        }
+        if (failure != null) {
+            throw failure;
+        }
+    }
+
+    private static RuntimeException addFailure(
+            RuntimeException failure, RuntimeException additionalFailure) {
+        if (failure == null) {
+            return additionalFailure;
+        }
+        failure.addSuppressed(additionalFailure);
+        return failure;
     }
 }

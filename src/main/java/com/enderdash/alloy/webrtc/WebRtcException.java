@@ -1,0 +1,15 @@
+package com.enderdash.alloy.webrtc;
+
+/** Reports a WebRTC operation error from the native runtime. */
+public final class WebRtcException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
+
+    /**
+     * Creates an exception with a native error message.
+     *
+     * @param message the error message
+     */
+    public WebRtcException(String message) {
+        super(message);
+    }
+}

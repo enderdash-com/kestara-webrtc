@@ -10,7 +10,7 @@ plugins {
   `maven-publish`
 }
 
-group = "com.enderdash"
+group = providers.environmentVariable("GROUP").orElse("com.enderdash").get()
 version = providers.environmentVariable("VERSION").orElse("0.1.0-SNAPSHOT").get()
 
 repositories {
@@ -62,6 +62,7 @@ val buildRustNative = tasks.register<Exec>("buildRustNative") {
     include("Cargo.toml", "Cargo.lock", "src/**/*.rs")
     exclude("target/**")
   })
+  inputs.file(layout.projectDirectory.file("rust-toolchain.toml"))
   outputs.file(nativeLibrary)
 }
 

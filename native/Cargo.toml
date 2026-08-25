@@ -2,7 +2,7 @@
 name = "alloy-webrtc-native"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.94"
 description = "Native WebRTC runtime for Alloy WebRTC"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/enderdash-com/alloy-webrtc"
@@ -12,7 +12,12 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
+async-trait = "0.1.89"
+bytes = "1.12.0"
+crossbeam-channel = "0.5.15"
 jni = "0.22.4"
+tokio = { version = "1.52.0", features = ["rt-multi-thread", "time"] }
+webrtc = "0.20.0"
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
