@@ -12,4 +12,14 @@ public final class WebRtcException extends RuntimeException {
     public WebRtcException(String message) {
         super(message);
     }
+
+    /**
+     * Creates an exception for a Java-side runtime failure.
+     *
+     * @param message the error message
+     * @param cause the underlying failure
+     */
+    public WebRtcException(String message, Throwable cause) {
+        super(message, cause);
+    }
 }

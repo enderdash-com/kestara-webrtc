@@ -3,12 +3,11 @@ package com.enderdash.kestara.webrtc;
 import com.enderdash.kestara.webrtc.internal.NativeBindings;
 import com.enderdash.kestara.webrtc.internal.NativeEvent;
 import com.enderdash.kestara.webrtc.internal.SerialExecutor;
-import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /** A WebRTC peer connection for DataChannel negotiation and transport. */
@@ -20,11 +19,15 @@ public final class PeerConnection implements AutoCloseable {
     private static final Consumer<IceConnectionState> NOOP_ICE_STATE = ignored -> {};
     private static final Consumer<IceGatheringState> NOOP_GATHERING_STATE = ignored -> {};
 
+    private final WebRtcRuntime runtime;
     private final long handle;
     private final long operationTimeoutMillis;
     private final SerialExecutor callbacks;
     private final Map<Long, DataChannel> dataChannels = new ConcurrentHashMap<>();
-    private final AtomicBoolean closed = new AtomicBoolean();
+    private final Object closeLock = new Object();
+    private volatile boolean closing;
+    private volatile boolean closed;
+    private CompletableFuture<Void> closeFuture;
     private volatile PeerConnectionState state = PeerConnectionState.NEW;
     private volatile IceConnectionState iceConnectionState = IceConnectionState.NEW;
     private volatile IceGatheringState iceGatheringState = IceGatheringState.NEW;
@@ -35,42 +38,36 @@ public final class PeerConnection implements AutoCloseable {
     private volatile Consumer<IceConnectionState> onIceConnectionStateChange = NOOP_ICE_STATE;
     private volatile Consumer<IceGatheringState> onIceGatheringStateChange = NOOP_GATHERING_STATE;
 
-    private PeerConnection(long handle, PeerConnectionConfiguration configuration) {
+    PeerConnection(
+            WebRtcRuntime runtime, long handle, PeerConnectionConfiguration configuration) {
+        this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.handle = handle;
-        this.operationTimeoutMillis = configuration.operationTimeoutMillis();
-        this.callbacks = new SerialExecutor(configuration.callbackExecutor());
+        operationTimeoutMillis = configuration.operationTimeoutMillis();
+        callbacks = new SerialExecutor(configuration.callbackExecutor());
     }
 
     /**
-     * Creates a peer connection and starts the shared native runtime when necessary.
+     * Creates a peer on a lazily initialized shared runtime.
+     *
+     * <p>Applications that need explicit ownership should use {@link
+     * WebRtcRuntime#createPeerConnection}.
      *
      * @param configuration the peer configuration
      * @return the peer connection
      */
     public static PeerConnection create(PeerConnectionConfiguration configuration) {
-        Objects.requireNonNull(configuration, "configuration");
-        NativeConfiguration nativeConfiguration = NativeConfiguration.from(configuration);
-        long handle = NativeBindings.createPeer(
-                nativeConfiguration.urls,
-                nativeConfiguration.usernames,
-                nativeConfiguration.credentials,
-                configuration.minPort(),
-                configuration.maxPort(),
-                configuration.iceTransportPolicy().ordinal(),
-                configuration.dataChannelSendBufferLimit(),
-                configuration.operationTimeoutMillis());
-        try {
-            PeerConnection peer = new PeerConnection(handle, configuration);
-            NativeEventDispatcher.register(handle, peer);
-            return peer;
-        } catch (RuntimeException | Error error) {
-            try {
-                NativeBindings.closePeer(handle, configuration.operationTimeoutMillis());
-            } catch (RuntimeException closeError) {
-                error.addSuppressed(closeError);
-            }
-            throw error;
-        }
+        return KestaraWebRtc.defaultRuntime().createPeerConnection(configuration);
+    }
+
+    /**
+     * Creates a peer asynchronously on a lazily initialized shared runtime.
+     *
+     * @param configuration the peer configuration
+     * @return a stage that completes with the peer
+     */
+    public static CompletionStage<PeerConnection> createAsync(
+            PeerConnectionConfiguration configuration) {
+        return KestaraWebRtc.defaultRuntime().createPeerConnectionAsync(configuration);
     }
 
     /**
@@ -157,88 +154,179 @@ public final class PeerConnection implements AutoCloseable {
     /**
      * Creates an SDP offer without applying it.
      *
+     * @return a stage that completes with the offer
+     */
+    public CompletionStage<SessionDescription> createOfferAsync() {
+        requireOpen();
+        return runtime.createDescriptionAsync(
+                        handle, SessionDescriptionType.OFFER, operationTimeoutMillis)
+                .thenApply(sdp -> new SessionDescription(sdp, SessionDescriptionType.OFFER));
+    }
+
+    /**
+     * Creates an SDP offer and waits up to the configured operation timeout.
+     *
      * @return the offer
      */
     public SessionDescription createOffer() {
-        requireOpen();
-        return new SessionDescription(
-                NativeBindings.createDescription(handle, SessionDescriptionType.OFFER.ordinal()),
-                SessionDescriptionType.OFFER);
+        return runtime.await(createOfferAsync(), operationTimeoutMillis);
     }
 
     /**
      * Creates an SDP answer without applying it.
      *
-     * @return the answer
+     * @return a stage that completes with the answer
      */
-    public SessionDescription createAnswer() {
+    public CompletionStage<SessionDescription> createAnswerAsync() {
         requireOpen();
-        return new SessionDescription(
-                NativeBindings.createDescription(handle, SessionDescriptionType.ANSWER.ordinal()),
-                SessionDescriptionType.ANSWER);
+        return runtime.createDescriptionAsync(
+                        handle, SessionDescriptionType.ANSWER, operationTimeoutMillis)
+                .thenApply(sdp -> new SessionDescription(sdp, SessionDescriptionType.ANSWER));
     }
 
     /**
-     * Applies a local session description and reports it to the local-description callback.
+     * Creates an SDP answer and waits up to the configured operation timeout.
+     *
+     * @return the answer
+     */
+    public SessionDescription createAnswer() {
+        return runtime.await(createAnswerAsync(), operationTimeoutMillis);
+    }
+
+    /**
+     * Applies a local session description without blocking the caller.
+     *
+     * @param description the description
+     * @return the operation stage
+     */
+    public CompletionStage<Void> setLocalDescriptionAsync(SessionDescription description) {
+        Objects.requireNonNull(description, "description");
+        requireOpen();
+        return runtime.setLocalDescriptionAsync(handle, description, operationTimeoutMillis)
+                .thenRun(() -> callbacks.execute(() -> onLocalDescription.accept(description)));
+    }
+
+    /**
+     * Applies a local session description and waits for completion.
      *
      * @param description the description
      */
     public void setLocalDescription(SessionDescription description) {
-        Objects.requireNonNull(description, "description");
-        requireOpen();
-        NativeBindings.setLocalDescription(
-                handle, description.sdp(), description.type().ordinal(), operationTimeoutMillis);
-        callbacks.execute(() -> onLocalDescription.accept(description));
+        runtime.await(setLocalDescriptionAsync(description), operationTimeoutMillis);
     }
 
     /**
-     * Creates and applies an offer or answer.
+     * Creates and applies an offer or answer without blocking the caller.
+     *
+     * @param type the description type
+     * @return a stage that completes with the applied description
+     */
+    public CompletionStage<SessionDescription> setLocalDescriptionAsync(
+            SessionDescriptionType type) {
+        Objects.requireNonNull(type, "type");
+        CompletionStage<SessionDescription> description = switch (type) {
+            case OFFER -> createOfferAsync();
+            case ANSWER -> createAnswerAsync();
+            case PRANSWER, ROLLBACK -> throw new UnsupportedOperationException(
+                    "Automatic local description does not support " + type);
+        };
+        return description.thenCompose(value ->
+                setLocalDescriptionAsync(value).thenApply(ignored -> value));
+    }
+
+    /**
+     * Creates and applies an offer or answer and waits for completion.
      *
      * @param type the description type
      * @return the applied description
      */
     public SessionDescription setLocalDescription(SessionDescriptionType type) {
-        Objects.requireNonNull(type, "type");
-        SessionDescription description = switch (type) {
-            case OFFER -> createOffer();
-            case ANSWER -> createAnswer();
-            case PRANSWER, ROLLBACK -> throw new UnsupportedOperationException(
-                    "Automatic local description does not support " + type);
-        };
-        setLocalDescription(description);
-        return description;
+        return runtime.await(setLocalDescriptionAsync(type), operationTimeoutMillis);
     }
 
     /**
-     * Applies a remote session description.
+     * Applies a remote session description without blocking the caller.
+     *
+     * @param description the description received through signaling
+     * @return the operation stage
+     */
+    public CompletionStage<Void> setRemoteDescriptionAsync(SessionDescription description) {
+        Objects.requireNonNull(description, "description");
+        requireOpen();
+        return runtime.setRemoteDescriptionAsync(handle, description, operationTimeoutMillis);
+    }
+
+    /**
+     * Applies a remote session description and waits for completion.
      *
      * @param description the description received through signaling
      */
     public void setRemoteDescription(SessionDescription description) {
-        Objects.requireNonNull(description, "description");
-        requireOpen();
-        NativeBindings.setRemoteDescription(
-                handle, description.sdp(), description.type().ordinal(), operationTimeoutMillis);
+        runtime.await(setRemoteDescriptionAsync(description), operationTimeoutMillis);
     }
 
     /**
-     * Adds a remote trickle ICE candidate.
+     * Adds a remote trickle ICE candidate without blocking the caller.
+     *
+     * @param candidate the candidate received through signaling
+     * @return the operation stage
+     */
+    public CompletionStage<Void> addIceCandidateAsync(IceCandidate candidate) {
+        Objects.requireNonNull(candidate, "candidate");
+        requireOpen();
+        return runtime.addIceCandidateAsync(handle, candidate, operationTimeoutMillis);
+    }
+
+    /**
+     * Adds a remote trickle ICE candidate and waits for completion.
      *
      * @param candidate the candidate received through signaling
      */
     public void addIceCandidate(IceCandidate candidate) {
-        Objects.requireNonNull(candidate, "candidate");
-        requireOpen();
-        NativeBindings.addIceCandidate(
-                handle,
-                candidate.candidate(),
-                candidate.sdpMid(),
-                candidate.sdpMLineIndex() == null ? -1 : candidate.sdpMLineIndex(),
-                operationTimeoutMillis);
+        runtime.await(addIceCandidateAsync(candidate), operationTimeoutMillis);
     }
 
     /**
-     * Creates an ordered and reliable DataChannel.
+     * Creates an ordered and reliable DataChannel without blocking the caller.
+     *
+     * @param label the channel label
+     * @return a stage that completes with the channel
+     */
+    public CompletionStage<DataChannel> createDataChannelAsync(String label) {
+        return createDataChannelAsync(label, DataChannelOptions.DEFAULT);
+    }
+
+    /**
+     * Creates a DataChannel without blocking the caller.
+     *
+     * @param label the channel label
+     * @param options the channel options
+     * @return a stage that completes with the channel
+     */
+    public CompletionStage<DataChannel> createDataChannelAsync(
+            String label, DataChannelOptions options) {
+        Objects.requireNonNull(label, "label");
+        Objects.requireNonNull(options, "options");
+        requireOpen();
+        return runtime.createDataChannelAsync(handle, label, options, operationTimeoutMillis)
+                .thenApply(channelHandle -> {
+                    DataChannel channel = new DataChannel(
+                            runtime,
+                            channelHandle,
+                            label,
+                            options.protocol(),
+                            options.ordered(),
+                            operationTimeoutMillis,
+                            callbacks,
+                            false,
+                            () -> dataChannels.remove(channelHandle));
+                    dataChannels.put(channelHandle, channel);
+                    return channel;
+                });
+    }
+
+    /**
+     * Creates an ordered and reliable DataChannel and waits for completion.
      *
      * @param label the channel label
      * @return the channel
@@ -248,137 +336,151 @@ public final class PeerConnection implements AutoCloseable {
     }
 
     /**
-     * Creates a DataChannel.
+     * Creates a DataChannel and waits for completion.
      *
      * @param label the channel label
      * @param options the channel options
      * @return the channel
      */
     public DataChannel createDataChannel(String label, DataChannelOptions options) {
-        Objects.requireNonNull(label, "label");
-        Objects.requireNonNull(options, "options");
-        requireOpen();
-        long channelHandle = NativeBindings.createDataChannel(
-                handle,
-                label,
-                options.ordered(),
-                optionalUnsigned16(options.maxPacketLifeTime()),
-                optionalUnsigned16(options.maxRetransmits()),
-                options.protocol(),
-                optionalUnsigned16(options.negotiatedId()),
-                operationTimeoutMillis);
-        DataChannel channel =
-                new DataChannel(
-                        channelHandle,
-                        label,
-                        options.protocol(),
-                        options.ordered(),
-                        callbacks,
-                        false);
-        dataChannels.put(channelHandle, channel);
-        return channel;
+        return runtime.await(createDataChannelAsync(label, options), operationTimeoutMillis);
+    }
+
+    /**
+     * Closes the peer and all owned DataChannels without blocking the caller.
+     *
+     * @return the shared close stage
+     */
+    public CompletionStage<Void> closeAsync() {
+        synchronized (closeLock) {
+            if (closeFuture != null) {
+                return closeFuture;
+            }
+            closing = true;
+            closeFuture = new CompletableFuture<>();
+            runtime.closePeerAsync(handle, operationTimeoutMillis)
+                    .whenComplete((ignored, error) -> {
+                        markClosed();
+                        if (error == null) {
+                            closeFuture.complete(null);
+                        } else {
+                            closeFuture.completeExceptionally(error);
+                        }
+                    });
+            return closeFuture;
+        }
     }
 
     /** Closes the peer and all owned DataChannels. */
     @Override
     public void close() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
-        NativeEventDispatcher.unregister(handle);
-        for (DataChannel channel : dataChannels.values()) {
-            channel.markClosed();
-        }
-        dataChannels.clear();
-        try {
-            NativeBindings.closePeer(handle, operationTimeoutMillis);
-        } finally {
-            state = PeerConnectionState.CLOSED;
-        }
+        runtime.await(closeAsync(), operationTimeoutMillis);
     }
 
-    void closeForShutdown() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
-        NativeEventDispatcher.unregister(handle);
-        for (DataChannel channel : dataChannels.values()) {
-            channel.markClosed();
-        }
-        dataChannels.clear();
-        state = PeerConnectionState.CLOSED;
+    int dataChannelCount() {
+        return dataChannels.size();
+    }
+
+    void closeForRuntimeShutdown() {
+        markClosed();
     }
 
     void handleNativeEvent(NativeEvent event) {
-        switch (event.kind()) {
-            case NativeBindings.EVENT_LOCAL_CANDIDATE -> {
-                Integer lineIndex = event.number() < 0 ? null : event.number();
-                IceCandidate candidate =
-                        new IceCandidate(event.text(), event.secondaryText(), lineIndex);
-                callbacks.execute(() -> onLocalCandidate.accept(candidate));
-            }
-            case NativeBindings.EVENT_PEER_STATE -> {
-                PeerConnectionState newState = enumValue(
-                        PeerConnectionState.values(), event.number(), "peer connection state");
-                state = newState;
-                callbacks.execute(() -> onStateChange.accept(newState));
-            }
-            case NativeBindings.EVENT_ICE_CONNECTION_STATE -> {
-                IceConnectionState newState = enumValue(
-                        IceConnectionState.values(), event.number(), "ICE connection state");
-                iceConnectionState = newState;
-                callbacks.execute(() -> onIceConnectionStateChange.accept(newState));
-            }
-            case NativeBindings.EVENT_ICE_GATHERING_STATE -> {
-                IceGatheringState newState = enumValue(
-                        IceGatheringState.values(), event.number(), "ICE gathering state");
-                iceGatheringState = newState;
-                callbacks.execute(() -> onIceGatheringStateChange.accept(newState));
-            }
-            case NativeBindings.EVENT_DATA_CHANNEL -> {
-                boolean ordered = (event.number() & 1) != 0;
-                boolean initiallyOpen = (event.number() & 2) != 0;
-                DataChannel channel = new DataChannel(
-                        event.channelHandle(),
-                        event.text() == null ? "" : event.text(),
-                        event.secondaryText() == null ? "" : event.secondaryText(),
-                        ordered,
-                        callbacks,
-                        initiallyOpen);
-                dataChannels.put(event.channelHandle(), channel);
-                callbacks.execute(() -> {
-                    onDataChannel.accept(channel);
-                    if (initiallyOpen) {
-                        channel.notifyOpen();
-                    }
-                });
-            }
-            case NativeBindings.EVENT_DATA_CHANNEL_OPEN,
-                    NativeBindings.EVENT_DATA_CHANNEL_CLOSING,
-                    NativeBindings.EVENT_DATA_CHANNEL_CLOSED,
-                    NativeBindings.EVENT_DATA_CHANNEL_ERROR,
-                    NativeBindings.EVENT_DATA_CHANNEL_TEXT,
-                    NativeBindings.EVENT_DATA_CHANNEL_BINARY -> {
-                DataChannel channel = dataChannels.get(event.channelHandle());
-                if (channel != null) {
-                    channel.handleNativeEvent(event);
-                    if (event.kind() == NativeBindings.EVENT_DATA_CHANNEL_CLOSED) {
-                        dataChannels.remove(event.channelHandle(), channel);
-                    }
+        try {
+            switch (event.kind()) {
+                case NativeBindings.EVENT_LOCAL_CANDIDATE -> {
+                    Integer lineIndex = event.number() < 0 ? null : event.number();
+                    IceCandidate candidate =
+                            new IceCandidate(event.text(), event.secondaryText(), lineIndex);
+                    callbacks.execute(() -> onLocalCandidate.accept(candidate));
                 }
+                case NativeBindings.EVENT_PEER_STATE -> {
+                    PeerConnectionState newState = enumValue(
+                            PeerConnectionState.values(), event.number(), "peer connection state");
+                    state = newState;
+                    callbacks.execute(() -> onStateChange.accept(newState));
+                }
+                case NativeBindings.EVENT_ICE_CONNECTION_STATE -> {
+                    IceConnectionState newState = enumValue(
+                            IceConnectionState.values(), event.number(), "ICE connection state");
+                    iceConnectionState = newState;
+                    callbacks.execute(() -> onIceConnectionStateChange.accept(newState));
+                }
+                case NativeBindings.EVENT_ICE_GATHERING_STATE -> {
+                    IceGatheringState newState = enumValue(
+                            IceGatheringState.values(), event.number(), "ICE gathering state");
+                    iceGatheringState = newState;
+                    callbacks.execute(() -> onIceGatheringStateChange.accept(newState));
+                }
+                case NativeBindings.EVENT_DATA_CHANNEL -> registerRemoteDataChannel(event);
+                case NativeBindings.EVENT_DATA_CHANNEL_OPEN,
+                        NativeBindings.EVENT_DATA_CHANNEL_CLOSING,
+                        NativeBindings.EVENT_DATA_CHANNEL_CLOSED,
+                        NativeBindings.EVENT_DATA_CHANNEL_ERROR,
+                        NativeBindings.EVENT_DATA_CHANNEL_TEXT,
+                        NativeBindings.EVENT_DATA_CHANNEL_BINARY -> routeDataChannelEvent(event);
+                default -> throw new IllegalArgumentException(
+                        "Unsupported peer event: " + event.kind());
             }
-            default -> throw new IllegalArgumentException("Unsupported peer event: " + event.kind());
+        } catch (RuntimeException error) {
+            System.getLogger(PeerConnection.class.getName())
+                    .log(System.Logger.Level.WARNING, "Failed to dispatch a WebRTC event", error);
+        }
+    }
+
+    private void registerRemoteDataChannel(NativeEvent event) {
+        boolean ordered = (event.number() & 1) != 0;
+        boolean initiallyOpen = (event.number() & 2) != 0;
+        long channelHandle = event.channelHandle();
+        DataChannel channel = new DataChannel(
+                runtime,
+                channelHandle,
+                event.text() == null ? "" : event.text(),
+                event.secondaryText() == null ? "" : event.secondaryText(),
+                ordered,
+                operationTimeoutMillis,
+                callbacks,
+                initiallyOpen,
+                () -> dataChannels.remove(channelHandle));
+        dataChannels.put(channelHandle, channel);
+        callbacks.execute(() -> {
+            onDataChannel.accept(channel);
+            if (initiallyOpen) {
+                channel.notifyOpen();
+            }
+        });
+    }
+
+    private void routeDataChannelEvent(NativeEvent event) {
+        DataChannel channel = dataChannels.get(event.channelHandle());
+        if (channel != null) {
+            channel.handleNativeEvent(event);
+        }
+    }
+
+    private void markClosed() {
+        synchronized (closeLock) {
+            if (closed) {
+                return;
+            }
+            closing = true;
+            closed = true;
+            for (DataChannel channel : dataChannels.values()) {
+                channel.markClosed();
+            }
+            dataChannels.clear();
+            state = PeerConnectionState.CLOSED;
+            runtime.unregisterPeer(handle, this);
+            if (closeFuture == null) {
+                closeFuture = CompletableFuture.completedFuture(null);
+            }
         }
     }
 
     private void requireOpen() {
-        if (closed.get()) {
+        if (closing || closed) {
             throw new IllegalStateException("PeerConnection is closed");
         }
-    }
-
-    private static int optionalUnsigned16(Integer value) {
-        return value == null ? -1 : value;
     }
 
     private static <T> T enumValue(T[] values, int ordinal, String name) {
@@ -386,24 +488,5 @@ public final class PeerConnection implements AutoCloseable {
             throw new IllegalArgumentException("Unknown " + name + ": " + ordinal);
         }
         return values[ordinal];
-    }
-
-    private record NativeConfiguration(String[] urls, String[] usernames, String[] credentials) {
-        private static NativeConfiguration from(PeerConnectionConfiguration configuration) {
-            List<String> urls = new ArrayList<>();
-            List<String> usernames = new ArrayList<>();
-            List<String> credentials = new ArrayList<>();
-            for (IceServer server : configuration.iceServers()) {
-                for (String url : server.urls()) {
-                    urls.add(url);
-                    usernames.add(server.username());
-                    credentials.add(server.credential());
-                }
-            }
-            return new NativeConfiguration(
-                    urls.toArray(String[]::new),
-                    usernames.toArray(String[]::new),
-                    credentials.toArray(String[]::new));
-        }
     }
 }

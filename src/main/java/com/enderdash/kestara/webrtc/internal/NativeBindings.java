@@ -19,6 +19,7 @@ public final class NativeBindings {
     public static final int EVENT_DATA_CHANNEL_ERROR = 9;
     public static final int EVENT_DATA_CHANNEL_TEXT = 10;
     public static final int EVENT_DATA_CHANNEL_BINARY = 11;
+    public static final int EVENT_OPERATION_COMPLETE = 12;
 
     static {
         NativeLibraryLoader.load();
@@ -26,26 +27,20 @@ public final class NativeBindings {
 
     private NativeBindings() {}
 
-    /**
-     * Returns the native ABI version.
-     *
-     * @return the native ABI version
-     */
     public static int abiVersion() {
         return nativeAbiVersion();
     }
 
-    /**
-     * Returns the native library version.
-     *
-     * @return the native library version
-     */
     public static String libraryVersion() {
         return Objects.requireNonNull(
                 nativeLibraryVersion(), "The native library returned a null version");
     }
 
-    public static long createPeer(
+    public static native long nativeCreateRuntime(int workerThreads);
+
+    public static native void nativeSubmitCreatePeer(
+            long runtime,
+            long operation,
             String[] urls,
             String[] usernames,
             String[] credentials,
@@ -53,109 +48,39 @@ public final class NativeBindings {
             int maxPort,
             int iceTransportPolicy,
             int dataChannelSendBufferLimit,
-            long operationTimeoutMillis) {
-        return nativeCreatePeer(
-                urls,
-                usernames,
-                credentials,
-                minPort,
-                maxPort,
-                iceTransportPolicy,
-                dataChannelSendBufferLimit,
-                operationTimeoutMillis);
-    }
+            long timeoutMillis);
 
-    public static String createDescription(long peer, int type) {
-        return nativeCreateDescription(peer, type);
-    }
+    public static native void nativeSubmitCreateDescription(
+            long runtime, long operation, long peer, int type, long timeoutMillis);
 
-    public static void setLocalDescription(long peer, String sdp, int type, long timeoutMillis) {
-        nativeSetLocalDescription(peer, sdp, type, timeoutMillis);
-    }
-
-    public static void setRemoteDescription(long peer, String sdp, int type, long timeoutMillis) {
-        nativeSetRemoteDescription(peer, sdp, type, timeoutMillis);
-    }
-
-    public static void addIceCandidate(
-            long peer, String candidate, String sdpMid, int sdpMLineIndex, long timeoutMillis) {
-        nativeAddIceCandidate(peer, candidate, sdpMid, sdpMLineIndex, timeoutMillis);
-    }
-
-    public static long createDataChannel(
+    public static native void nativeSubmitSetLocalDescription(
+            long runtime,
+            long operation,
             long peer,
-            String label,
-            boolean ordered,
-            int maxPacketLifeTime,
-            int maxRetransmits,
-            String protocol,
-            int negotiatedId,
-            long timeoutMillis) {
-        return nativeCreateDataChannel(
-                peer,
-                label,
-                ordered,
-                maxPacketLifeTime,
-                maxRetransmits,
-                protocol,
-                negotiatedId,
-                timeoutMillis);
-    }
+            String sdp,
+            int type,
+            long timeoutMillis);
 
-    public static void sendDataChannelText(long channel, String text) {
-        nativeSendDataChannelText(channel, text);
-    }
+    public static native void nativeSubmitSetRemoteDescription(
+            long runtime,
+            long operation,
+            long peer,
+            String sdp,
+            int type,
+            long timeoutMillis);
 
-    public static void sendDataChannelBinary(long channel, byte[] data) {
-        nativeSendDataChannelBinary(channel, data);
-    }
+    public static native void nativeSubmitAddIceCandidate(
+            long runtime,
+            long operation,
+            long peer,
+            String candidate,
+            String sdpMid,
+            int sdpMLineIndex,
+            long timeoutMillis);
 
-    public static void closeDataChannel(long channel) {
-        nativeCloseDataChannel(channel);
-    }
-
-    public static void closePeer(long peer, long timeoutMillis) {
-        nativeClosePeer(peer, timeoutMillis);
-    }
-
-    public static NativeEvent pollEvent(long timeoutMillis) {
-        return nativePollEvent(timeoutMillis);
-    }
-
-    public static void wakeEventLoop() {
-        nativeWakeEventLoop();
-    }
-
-    public static void shutdown() {
-        nativeShutdown();
-    }
-
-    private static native int nativeAbiVersion();
-
-    private static native String nativeLibraryVersion();
-
-    private static native long nativeCreatePeer(
-            String[] urls,
-            String[] usernames,
-            String[] credentials,
-            int minPort,
-            int maxPort,
-            int iceTransportPolicy,
-            int dataChannelSendBufferLimit,
-            long operationTimeoutMillis);
-
-    private static native String nativeCreateDescription(long peer, int type);
-
-    private static native void nativeSetLocalDescription(
-            long peer, String sdp, int type, long timeoutMillis);
-
-    private static native void nativeSetRemoteDescription(
-            long peer, String sdp, int type, long timeoutMillis);
-
-    private static native void nativeAddIceCandidate(
-            long peer, String candidate, String sdpMid, int sdpMLineIndex, long timeoutMillis);
-
-    private static native long nativeCreateDataChannel(
+    public static native void nativeSubmitCreateDataChannel(
+            long runtime,
+            long operation,
             long peer,
             String label,
             boolean ordered,
@@ -165,17 +90,28 @@ public final class NativeBindings {
             int negotiatedId,
             long timeoutMillis);
 
-    private static native void nativeSendDataChannelText(long channel, String text);
+    public static native void nativeSubmitSendDataChannelText(
+            long runtime, long operation, long channel, String text, long timeoutMillis);
 
-    private static native void nativeSendDataChannelBinary(long channel, byte[] data);
+    public static native void nativeSubmitSendDataChannelBinary(
+            long runtime, long operation, long channel, byte[] data, long timeoutMillis);
 
-    private static native void nativeCloseDataChannel(long channel);
+    public static native void nativeSubmitCloseDataChannel(
+            long runtime, long operation, long channel, long timeoutMillis);
 
-    private static native void nativeClosePeer(long peer, long timeoutMillis);
+    public static native void nativeSubmitClosePeer(
+            long runtime, long operation, long peer, long timeoutMillis);
 
-    private static native NativeEvent nativePollEvent(long timeoutMillis);
+    public static native void nativeSubmitCloseRuntime(
+            long runtime, long operation, long timeoutMillis);
 
-    private static native void nativeWakeEventLoop();
+    public static native NativeEvent nativePollRuntimeEvent(long runtime, long timeoutMillis);
 
-    private static native void nativeShutdown();
+    public static native void nativeWakeRuntime(long runtime);
+
+    public static native void nativeReleaseRuntime(long runtime);
+
+    private static native int nativeAbiVersion();
+
+    private static native String nativeLibraryVersion();
 }

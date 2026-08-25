@@ -9,6 +9,7 @@ public record NativeEvent(
         int kind,
         long peerHandle,
         long channelHandle,
+        long operationHandle,
         String text,
         String secondaryText,
         int number,

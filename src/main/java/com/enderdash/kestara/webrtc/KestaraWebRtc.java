@@ -2,10 +2,13 @@ package com.enderdash.kestara.webrtc;
 
 import com.enderdash.kestara.webrtc.internal.NativeBindings;
 
-/** Provides metadata and entry points for Kestara WebRTC. */
+/** Provides metadata and compatibility entry points for Kestara WebRTC. */
 public final class KestaraWebRtc {
     /** The native ABI required by this Java API. */
-    public static final int NATIVE_ABI_VERSION = 2;
+    public static final int NATIVE_ABI_VERSION = 3;
+
+    private static final Object DEFAULT_RUNTIME_LOCK = new Object();
+    private static WebRtcRuntime defaultRuntime;
 
     static {
         int actualVersion = NativeBindings.abiVersion();
@@ -38,31 +41,28 @@ public final class KestaraWebRtc {
         return NativeBindings.libraryVersion();
     }
 
-    /** Closes all peers, stops event dispatch, and releases the native runtime. */
+    /** Closes the shared compatibility runtime used by {@link PeerConnection#create}. */
     public static void shutdown() {
-        NativeEventDispatcher.closeAll();
-        RuntimeException failure = null;
-        try {
-            NativeEventDispatcher.stop();
-        } catch (RuntimeException error) {
-            failure = addFailure(failure, error);
+        WebRtcRuntime runtime;
+        synchronized (DEFAULT_RUNTIME_LOCK) {
+            runtime = defaultRuntime;
+            defaultRuntime = null;
         }
-        try {
-            NativeBindings.shutdown();
-        } catch (RuntimeException error) {
-            failure = addFailure(failure, error);
-        }
-        if (failure != null) {
-            throw failure;
+        if (runtime != null) {
+            runtime.close();
         }
     }
 
-    private static RuntimeException addFailure(
-            RuntimeException failure, RuntimeException additionalFailure) {
-        if (failure == null) {
-            return additionalFailure;
+    static void ensureNativeCompatibility() {
+        // Calling this method initializes the class and performs the ABI check.
+    }
+
+    static WebRtcRuntime defaultRuntime() {
+        synchronized (DEFAULT_RUNTIME_LOCK) {
+            if (defaultRuntime == null || defaultRuntime.diagnostics().closed()) {
+                defaultRuntime = WebRtcRuntime.create();
+            }
+            return defaultRuntime;
         }
-        failure.addSuppressed(additionalFailure);
-        return failure;
     }
 }

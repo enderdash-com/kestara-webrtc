@@ -8,9 +8,8 @@ use jni::{Env, EnvUnowned, jni_sig, jni_str};
 use webrtc::peer_connection::{RTCIceCandidateInit, RTCIceServer, RTCSessionDescription};
 
 use crate::NATIVE_ABI_VERSION;
-use crate::events;
-use crate::registry::{self, DataChannelConfiguration, PeerConfiguration};
-use crate::runtime;
+use crate::registry::{DataChannelConfiguration, PeerConfiguration};
+use crate::runtime::{self, Command};
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeAbiVersion(
@@ -33,9 +32,28 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCreatePeer(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCreateRuntime(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    worker_threads: jint,
+) -> jlong {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<jlong> {
+            let result = usize::try_from(worker_threads)
+                .map_err(|_| "The worker thread count must not be negative".to_owned())
+                .and_then(runtime::create)
+                .and_then(handle_to_jlong);
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitCreatePeer(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     urls: JObjectArray<'_, JString<'_>>,
     usernames: JObjectArray<'_, JString<'_>>,
     credentials: JObjectArray<'_, JString<'_>>,
@@ -43,14 +61,16 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
     max_port: jint,
     ice_transport_policy: jint,
     data_channel_send_buffer_limit: jint,
-    operation_timeout_millis: jlong,
-) -> jlong {
+    timeout_millis: jlong,
+) {
     unowned_env
-        .with_env(|env| -> jni::errors::Result<jlong> {
+        .with_env(|env| -> jni::errors::Result<()> {
             let urls = read_string_array(env, &urls)?;
             let usernames = read_string_array(env, &usernames)?;
             let credentials = read_string_array(env, &credentials)?;
             let result = (|| {
+                let runtime_handle = handle_from_jlong(runtime_handle)?;
+                let operation_handle = handle_from_jlong(operation_handle)?;
                 if urls.len() != usernames.len() || urls.len() != credentials.len() {
                     return Err("ICE server arrays must have the same length".to_owned());
                 }
@@ -66,7 +86,7 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                     usize::try_from(data_channel_send_buffer_limit).map_err(|_| {
                         "DataChannel send buffer limit must not be negative".to_owned()
                     })?;
-                let operation_timeout = timeout(operation_timeout_millis)?;
+                let timeout = timeout(timeout_millis)?;
                 let ice_servers = urls
                     .into_iter()
                     .zip(usernames)
@@ -77,101 +97,114 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                         credential,
                     })
                     .collect();
-                registry::create_peer(PeerConfiguration {
-                    ice_servers,
-                    min_port,
-                    max_port,
-                    relay_only: ice_transport_policy == 1,
-                    data_channel_send_buffer_limit,
-                    operation_timeout,
-                })
-                .and_then(handle_to_jlong)
+                runtime::submit(
+                    runtime_handle,
+                    Command::CreatePeer {
+                        operation_handle,
+                        timeout,
+                        configuration: PeerConfiguration {
+                            ice_servers,
+                            min_port,
+                            max_port,
+                            relay_only: ice_transport_policy == 1,
+                            data_channel_send_buffer_limit,
+                        },
+                    },
+                )
             })();
             operation_result(env, result)
         })
-        .resolve::<ThrowRuntimeExAndDefault>()
+        .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCreateDescription(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitCreateDescription(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     peer_handle: jlong,
-    description_type: jint,
-) -> jstring {
-    unowned_env
-        .with_env(|env| -> jni::errors::Result<jstring> {
-            let result =
-                handle_from_jlong(peer_handle).and_then(|peer_handle| match description_type {
-                    0 => registry::create_description(peer_handle, false),
-                    1 => registry::create_description(peer_handle, true),
-                    _ => Err("Only offer and answer descriptions can be created".to_owned()),
-                });
-            let description = operation_result(env, result)?;
-            if env.exception_check() {
-                return Ok(std::ptr::null_mut());
-            }
-            Ok(env.new_string(description)?.into_raw())
-        })
-        .resolve::<ThrowRuntimeExAndDefault>()
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSetLocalDescription(
-    mut unowned_env: EnvUnowned<'_>,
-    _class: JClass<'_>,
-    peer_handle: jlong,
-    sdp: JString<'_>,
     description_type: jint,
     timeout_millis: jlong,
 ) {
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
-            let sdp = read_string(env, &sdp)?;
-            let result = handle_from_jlong(peer_handle)
-                .and_then(|handle| {
-                    parse_description(sdp, description_type).map(|value| (handle, value))
-                })
-                .and_then(|(handle, description)| {
-                    timeout(timeout_millis).and_then(|limit| {
-                        registry::set_local_description(handle, description, limit)
-                    })
-                });
+            let result = (|| {
+                let runtime_handle = handle_from_jlong(runtime_handle)?;
+                let operation_handle = handle_from_jlong(operation_handle)?;
+                let peer_handle = handle_from_jlong(peer_handle)?;
+                let answer = match description_type {
+                    0 => false,
+                    1 => true,
+                    _ => return Err("Only offer and answer descriptions can be created".to_owned()),
+                };
+                runtime::submit(
+                    runtime_handle,
+                    Command::CreateDescription {
+                        operation_handle,
+                        timeout: timeout(timeout_millis)?,
+                        peer_handle,
+                        answer,
+                    },
+                )
+            })();
             operation_result(env, result)
         })
         .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSetRemoteDescription(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitSetLocalDescription(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     peer_handle: jlong,
     sdp: JString<'_>,
     description_type: jint,
     timeout_millis: jlong,
 ) {
-    unowned_env
-        .with_env(|env| -> jni::errors::Result<()> {
-            let sdp = read_string(env, &sdp)?;
-            let result = handle_from_jlong(peer_handle)
-                .and_then(|handle| {
-                    parse_description(sdp, description_type).map(|value| (handle, value))
-                })
-                .and_then(|(handle, description)| {
-                    timeout(timeout_millis).and_then(|limit| {
-                        registry::set_remote_description(handle, description, limit)
-                    })
-                });
-            operation_result(env, result)
-        })
-        .resolve::<ThrowRuntimeExAndDefault>();
+    submit_description(
+        &mut unowned_env,
+        runtime_handle,
+        operation_handle,
+        peer_handle,
+        &sdp,
+        description_type,
+        timeout_millis,
+        true,
+    );
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeAddIceCandidate(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitSetRemoteDescription(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    peer_handle: jlong,
+    sdp: JString<'_>,
+    description_type: jint,
+    timeout_millis: jlong,
+) {
+    submit_description(
+        &mut unowned_env,
+        runtime_handle,
+        operation_handle,
+        peer_handle,
+        &sdp,
+        description_type,
+        timeout_millis,
+        false,
+    );
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitAddIceCandidate(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     peer_handle: jlong,
     candidate: JString<'_>,
     sdp_mid: JString<'_>,
@@ -183,19 +216,20 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
             let candidate = read_string(env, &candidate)?;
             let sdp_mid = read_optional_string(env, &sdp_mid)?;
             let result = (|| {
-                let handle = handle_from_jlong(peer_handle)?;
-                let sdp_mline_index = optional_u16(sdp_mline_index, "SDP m-line index")?;
-                let limit = timeout(timeout_millis)?;
-                registry::add_ice_candidate(
-                    handle,
-                    RTCIceCandidateInit {
-                        candidate,
-                        sdp_mid,
-                        sdp_mline_index,
-                        username_fragment: None,
-                        url: None,
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::AddIceCandidate {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        peer_handle: handle_from_jlong(peer_handle)?,
+                        candidate: RTCIceCandidateInit {
+                            candidate,
+                            sdp_mid,
+                            sdp_mline_index: optional_u16(sdp_mline_index, "SDP m-line index")?,
+                            username_fragment: None,
+                            url: None,
+                        },
                     },
-                    limit,
                 )
             })();
             operation_result(env, result)
@@ -204,9 +238,11 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCreateDataChannel(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitCreateDataChannel(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     peer_handle: jlong,
     label: JString<'_>,
     ordered: jboolean,
@@ -215,111 +251,189 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
     protocol: JString<'_>,
     negotiated_id: jint,
     timeout_millis: jlong,
-) -> jlong {
+) {
     unowned_env
-        .with_env(|env| -> jni::errors::Result<jlong> {
+        .with_env(|env| -> jni::errors::Result<()> {
             let label = read_string(env, &label)?;
             let protocol = read_string(env, &protocol)?;
             let result = (|| {
-                let peer_handle = handle_from_jlong(peer_handle)?;
-                let limit = timeout(timeout_millis)?;
-                registry::create_data_channel(
-                    peer_handle,
-                    DataChannelConfiguration {
-                        label,
-                        ordered,
-                        max_packet_life_time: optional_u16(
-                            max_packet_life_time,
-                            "maximum packet lifetime",
-                        )?,
-                        max_retransmits: optional_u16(max_retransmits, "maximum retransmissions")?,
-                        protocol,
-                        negotiated_id: optional_u16(negotiated_id, "negotiated DataChannel ID")?,
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::CreateDataChannel {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        peer_handle: handle_from_jlong(peer_handle)?,
+                        configuration: DataChannelConfiguration {
+                            label,
+                            ordered,
+                            max_packet_life_time: optional_u16(
+                                max_packet_life_time,
+                                "maximum packet lifetime",
+                            )?,
+                            max_retransmits: optional_u16(
+                                max_retransmits,
+                                "maximum retransmissions",
+                            )?,
+                            protocol,
+                            negotiated_id: optional_u16(
+                                negotiated_id,
+                                "negotiated DataChannel ID",
+                            )?,
+                        },
                     },
-                    limit,
                 )
-                .and_then(handle_to_jlong)
             })();
             operation_result(env, result)
         })
-        .resolve::<ThrowRuntimeExAndDefault>()
+        .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSendDataChannelText(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitSendDataChannelText(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     channel_handle: jlong,
     text: JString<'_>,
+    timeout_millis: jlong,
 ) {
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
             let text = read_string(env, &text)?;
-            let result = handle_from_jlong(channel_handle)
-                .and_then(|handle| registry::send_text(handle, text));
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::SendText {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        channel_handle: handle_from_jlong(channel_handle)?,
+                        text,
+                    },
+                )
+            })();
             operation_result(env, result)
         })
         .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSendDataChannelBinary(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitSendDataChannelBinary(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     channel_handle: jlong,
     data: JByteArray<'_>,
+    timeout_millis: jlong,
 ) {
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
             let data = env.convert_byte_array(&data)?;
-            let result = handle_from_jlong(channel_handle)
-                .and_then(|handle| registry::send_binary(handle, data));
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::SendBinary {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        channel_handle: handle_from_jlong(channel_handle)?,
+                        data,
+                    },
+                )
+            })();
             operation_result(env, result)
         })
         .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCloseDataChannel(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitCloseDataChannel(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     channel_handle: jlong,
+    timeout_millis: jlong,
 ) {
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
-            let result = handle_from_jlong(channel_handle).and_then(registry::close_data_channel);
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::CloseDataChannel {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        channel_handle: handle_from_jlong(channel_handle)?,
+                    },
+                )
+            })();
             operation_result(env, result)
         })
         .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeClosePeer(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitClosePeer(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
     peer_handle: jlong,
     timeout_millis: jlong,
 ) {
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
-            let result = handle_from_jlong(peer_handle).and_then(|handle| {
-                timeout(timeout_millis).and_then(|limit| registry::close_peer(handle, limit))
-            });
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::ClosePeer {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        peer_handle: handle_from_jlong(peer_handle)?,
+                    },
+                )
+            })();
             operation_result(env, result)
         })
         .resolve::<ThrowRuntimeExAndDefault>();
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativePollEvent(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitCloseRuntime(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::Shutdown {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativePollRuntimeEvent(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
     timeout_millis: jlong,
 ) -> jobject {
     unowned_env
         .with_env(|env| -> jni::errors::Result<jobject> {
-            let duration = timeout(timeout_millis).unwrap_or(Duration::ZERO);
-            let Some(event) = events::poll(duration) else {
+            let result = handle_from_jlong(runtime_handle)
+                .and_then(|runtime_handle| runtime::poll(runtime_handle, timeout(timeout_millis)?));
+            let Some(event) = operation_result(env, result)? else {
                 return Ok(std::ptr::null_mut());
             };
             let text = optional_java_string(env, event.text)?;
@@ -330,11 +444,12 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
             };
             let object = env.new_object(
                 jni_str!("com/enderdash/kestara/webrtc/internal/NativeEvent"),
-                jni_sig!("(IJJLjava/lang/String;Ljava/lang/String;I[B)V"),
+                jni_sig!("(IJJJLjava/lang/String;Ljava/lang/String;I[B)V"),
                 &[
                     JValue::Int(event.kind),
                     JValue::Long(handle_to_jlong(event.peer_handle).unwrap_or_default()),
                     JValue::Long(handle_to_jlong(event.channel_handle).unwrap_or_default()),
+                    JValue::Long(handle_to_jlong(event.operation_handle).unwrap_or_default()),
                     JValue::Object(&text),
                     JValue::Object(&secondary_text),
                     JValue::Int(event.number),
@@ -347,30 +462,74 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeWakeEventLoop(
-    _env: EnvUnowned<'_>,
-    _class: JClass<'_>,
-) {
-    events::wake();
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeShutdown(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeWakeRuntime(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
+    runtime_handle: jlong,
 ) {
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
-            let limit = Duration::from_secs(2);
-            let close_result = registry::shutdown_all(limit);
-            let shutdown_result = runtime::shutdown(limit);
-            let result = match (close_result, shutdown_result) {
-                (Ok(()), Ok(())) => Ok(()),
-                (Err(error), Ok(())) | (Ok(()), Err(error)) => Err(error),
-                (Err(close_error), Err(shutdown_error)) => Err(format!(
-                    "{close_error}; runtime shutdown failed: {shutdown_error}"
-                )),
-            };
+            let result = handle_from_jlong(runtime_handle).and_then(runtime::wake);
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeReleaseRuntime(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let result = handle_from_jlong(runtime_handle).and_then(runtime::release);
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[allow(clippy::too_many_arguments)]
+fn submit_description(
+    unowned_env: &mut EnvUnowned<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    peer_handle: jlong,
+    sdp: &JString<'_>,
+    description_type: jint,
+    timeout_millis: jlong,
+    local: bool,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let sdp = read_string(env, sdp)?;
+            let result = (|| {
+                let runtime_handle = handle_from_jlong(runtime_handle)?;
+                let operation_handle = handle_from_jlong(operation_handle)?;
+                let peer_handle = handle_from_jlong(peer_handle)?;
+                let timeout = timeout(timeout_millis)?;
+                let command = parse_description(sdp, description_type).map(|description| {
+                    if local {
+                        Command::SetLocalDescription {
+                            operation_handle,
+                            timeout,
+                            peer_handle,
+                            description,
+                        }
+                    } else {
+                        Command::SetRemoteDescription {
+                            operation_handle,
+                            timeout,
+                            peer_handle,
+                            description,
+                        }
+                    }
+                });
+                match command {
+                    Ok(command) => runtime::submit(runtime_handle, command),
+                    Err(error) => runtime::complete_error(runtime_handle, operation_handle, error),
+                }
+            })();
             operation_result(env, result)
         })
         .resolve::<ThrowRuntimeExAndDefault>();

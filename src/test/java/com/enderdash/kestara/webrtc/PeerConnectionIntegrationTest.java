@@ -1,6 +1,8 @@
 package com.enderdash.kestara.webrtc;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -44,6 +46,39 @@ class PeerConnectionIntegrationTest {
     }
 
     @Test
+    void keepsExplicitRuntimesIsolated() throws Exception {
+        WebRtcRuntimeOptions firstOptions =
+                WebRtcRuntimeOptions.DEFAULT.withWorkerThreads(1);
+        WebRtcRuntimeOptions secondOptions =
+                WebRtcRuntimeOptions.DEFAULT.withWorkerThreads(3);
+
+        try (WebRtcRuntime first = WebRtcRuntime.create(firstOptions);
+                WebRtcRuntime second = WebRtcRuntime.create(secondOptions)) {
+            PeerConnection firstPeer = first.createPeerConnectionAsync(
+                            PeerConnectionConfiguration.DEFAULT)
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            PeerConnection secondPeer = second.createPeerConnectionAsync(
+                            PeerConnectionConfiguration.DEFAULT)
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+
+            assertEquals(1, first.diagnostics().workerThreads());
+            assertEquals(3, second.diagnostics().workerThreads());
+            assertEquals(1, first.diagnostics().peerConnections());
+            assertEquals(1, second.diagnostics().peerConnections());
+
+            first.closeAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
+
+            assertTrue(first.diagnostics().closed());
+            assertEquals(PeerConnectionState.CLOSED, firstPeer.state());
+            assertFalse(second.diagnostics().closed());
+            assertEquals(1, second.diagnostics().peerConnections());
+            secondPeer.closeAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
     void exchangesBinaryDataOverAnOrderedChannel() throws Exception {
         ExecutorService callbacks = Executors.newCachedThreadPool();
         PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
@@ -79,9 +114,15 @@ class PeerConnectionIntegrationTest {
             DataChannel channel = offerer.createDataChannel("kestara-test");
             channel.onOpen(offererOpen::countDown);
 
-            SessionDescription offer = offerer.createOffer();
-            offerer.setLocalDescription(offer);
-            answerer.setRemoteDescription(offer);
+            SessionDescription offer = offerer.createOfferAsync()
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            offerer.setLocalDescriptionAsync(offer)
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            answerer.setRemoteDescriptionAsync(offer)
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
             offererCandidates.remoteDescriptionReady();
 
             SessionDescription answer = answerer.createAnswer();
@@ -94,7 +135,10 @@ class PeerConnectionIntegrationTest {
             assertTrue(answererOpen.await(10, TimeUnit.SECONDS), "Answerer DataChannel did not open");
 
             byte[] payload = {1, 3, 3, 7};
-            channel.send(payload);
+            ByteBuffer source = ByteBuffer.wrap(payload);
+            channel.sendAsync(source).toCompletableFuture().get(5, TimeUnit.SECONDS);
+
+            assertEquals(0, source.position());
 
             assertTrue(binaryReceived.await(10, TimeUnit.SECONDS), "Binary message was not received");
             assertArrayEquals(payload, received.get());
@@ -114,11 +158,11 @@ class PeerConnectionIntegrationTest {
 
         private void accept(IceCandidate candidate) {
             if (ready.get()) {
-                remote.addIceCandidate(candidate);
+                remote.addIceCandidateAsync(candidate).toCompletableFuture().join();
             } else {
                 pending.add(candidate);
                 if (ready.get() && pending.remove(candidate)) {
-                    remote.addIceCandidate(candidate);
+                    remote.addIceCandidateAsync(candidate).toCompletableFuture().join();
                 }
             }
         }
@@ -127,7 +171,7 @@ class PeerConnectionIntegrationTest {
             ready.set(true);
             for (IceCandidate candidate : pending) {
                 if (pending.remove(candidate)) {
-                    remote.addIceCandidate(candidate);
+                    remote.addIceCandidateAsync(candidate).toCompletableFuture().join();
                 }
             }
         }

@@ -1,7 +1,6 @@
-use std::sync::LazyLock;
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 pub const WAKE: i32 = 0;
 pub const LOCAL_CANDIDATE: i32 = 1;
@@ -15,12 +14,14 @@ pub const DATA_CHANNEL_CLOSED: i32 = 8;
 pub const DATA_CHANNEL_ERROR: i32 = 9;
 pub const DATA_CHANNEL_TEXT: i32 = 10;
 pub const DATA_CHANNEL_BINARY: i32 = 11;
+pub const OPERATION_COMPLETE: i32 = 12;
 
 #[derive(Debug)]
 pub struct NativeEvent {
     pub kind: i32,
     pub peer_handle: u64,
     pub channel_handle: u64,
+    pub operation_handle: u64,
     pub text: Option<String>,
     pub secondary_text: Option<String>,
     pub number: i32,
@@ -33,6 +34,7 @@ impl NativeEvent {
             kind,
             peer_handle,
             channel_handle: 0,
+            operation_handle: 0,
             text: None,
             secondary_text: None,
             number,
@@ -45,27 +47,54 @@ impl NativeEvent {
             kind,
             peer_handle,
             channel_handle,
+            operation_handle: 0,
             text: None,
             secondary_text: None,
             number: 0,
             data: None,
         }
     }
+
+    pub fn operation(operation_handle: u64, result: Result<OperationValue, String>) -> Self {
+        match result {
+            Ok(value) => Self {
+                kind: OPERATION_COMPLETE,
+                peer_handle: value.peer_handle,
+                channel_handle: value.channel_handle,
+                operation_handle,
+                text: value.text,
+                secondary_text: None,
+                number: 0,
+                data: None,
+            },
+            Err(error) => Self {
+                kind: OPERATION_COMPLETE,
+                peer_handle: 0,
+                channel_handle: 0,
+                operation_handle,
+                text: None,
+                secondary_text: Some(error),
+                number: 1,
+                data: None,
+            },
+        }
+    }
 }
 
-static EVENTS: LazyLock<(Sender<NativeEvent>, Receiver<NativeEvent>)> = LazyLock::new(unbounded);
-
-pub fn send(event: NativeEvent) {
-    let _ = EVENTS.0.send(event);
+#[derive(Debug, Default)]
+pub struct OperationValue {
+    pub peer_handle: u64,
+    pub channel_handle: u64,
+    pub text: Option<String>,
 }
 
-pub fn poll(timeout: Duration) -> Option<NativeEvent> {
-    match EVENTS.1.recv_timeout(timeout) {
+pub fn poll(receiver: &Receiver<NativeEvent>, timeout: Duration) -> Option<NativeEvent> {
+    match receiver.recv_timeout(timeout) {
         Ok(event) if event.kind != WAKE => Some(event),
         Ok(_) | Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => None,
     }
 }
 
-pub fn wake() {
-    send(NativeEvent::peer(WAKE, 0, 0));
+pub fn wake(sender: &Sender<NativeEvent>) {
+    let _ = sender.send(NativeEvent::peer(WAKE, 0, 0));
 }

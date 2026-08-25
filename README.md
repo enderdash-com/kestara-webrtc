@@ -16,7 +16,9 @@ Kestara WebRTC is a WebRTC DataChannel library for Java. It provides a small Jav
 - Optional UDP port ranges
 - Ordered, unordered, reliable, and partially reliable DataChannels
 - Text and binary messages
-- Explicit resource ownership and bounded native operations
+- Isolated runtimes with configurable Rust worker counts
+- Non-blocking operations through `CompletionStage`
+- Deterministic, bounded native shutdown
 - Ordered Java callbacks on a configurable executor
 
 Media capture, codecs, rendering, and signaling services are outside the current scope.
@@ -64,6 +66,7 @@ import com.enderdash.kestara.webrtc.PeerConnection;
 import com.enderdash.kestara.webrtc.PeerConnectionConfiguration;
 import com.enderdash.kestara.webrtc.SessionDescription;
 import com.enderdash.kestara.webrtc.SessionDescriptionType;
+import com.enderdash.kestara.webrtc.WebRtcRuntime;
 import java.util.List;
 
 var configuration = PeerConnectionConfiguration.DEFAULT.withIceServers(List.of(
@@ -73,7 +76,8 @@ var configuration = PeerConnectionConfiguration.DEFAULT.withIceServers(List.of(
                 "credential",
                 "turn:turn.example.com:3478?transport=udp")));
 
-try (var peer = PeerConnection.create(configuration)) {
+try (WebRtcRuntime runtime = WebRtcRuntime.create();
+        PeerConnection peer = runtime.createPeerConnection(configuration)) {
     peer.onLocalCandidate(candidate -> sendCandidateToRemotePeer(candidate));
     peer.onDataChannel(channel -> configureChannel(channel));
 
@@ -91,11 +95,44 @@ Set each callback before an operation that can produce its event. Incoming DataC
 
 ## Lifecycle and threads
 
-`PeerConnection` and `DataChannel` implement `AutoCloseable`. Close each object when it is no longer needed. Call `KestaraWebRtc.shutdown()` during application shutdown to close remaining peers and release the shared native runtime.
+Use one `WebRtcRuntime` for each independently owned application, plugin, or test lifecycle. A runtime owns its Rust worker pool, native handles, event thread, and peer connections. Closing it gives accepted operations time to finish, closes its peers, and joins the native worker threads. It cancels remaining work when the shutdown timeout expires.
 
-Rust protocol tasks run on a Kestara-owned Tokio runtime. One daemon Java thread receives native events. Kestara sends each peer's callbacks to its configured Java executor in event order. Application callbacks do not run on Rust protocol threads.
+Configure its worker count and shutdown bound when needed:
 
-Blocking Java operations use the configured operation timeout. Native runtime shutdown also has a fixed upper time limit. These limits prevent a stalled protocol task from blocking Java shutdown without a bound.
+```java
+var options = WebRtcRuntimeOptions.DEFAULT
+        .withWorkerThreads(4)
+        .withShutdownTimeout(Duration.ofSeconds(10));
+
+try (WebRtcRuntime runtime = WebRtcRuntime.create(options)) {
+    WebRtcRuntimeDiagnostics diagnostics = runtime.diagnostics();
+}
+```
+
+`PeerConnection.create(...)` remains available as a convenience. It uses a shared runtime. Call `KestaraWebRtc.shutdown()` when the application no longer needs that shared runtime.
+
+## Asynchronous operations
+
+Native peer and DataChannel operations return `CompletionStage` variants. They enqueue work on the owning Rust runtime instead of blocking the Java caller.
+
+```java
+peer.setRemoteDescriptionAsync(remoteDescription)
+        .thenCompose(ignored -> peer.setLocalDescriptionAsync(SessionDescriptionType.ANSWER))
+        .thenAccept(this::sendAnswerToRemotePeer)
+        .exceptionally(error -> {
+            reportNegotiationFailure(error);
+            return null;
+        });
+
+CompletionStage<Void> sent = channel.sendAsync(byteBuffer);
+CompletionStage<Void> closed = peer.closeAsync();
+```
+
+The synchronous methods call the same asynchronous commands and wait up to the peer's configured operation timeout. Prefer the asynchronous methods on server request threads and callback executors.
+
+Rust protocol tasks run on runtime-owned Tokio workers. One daemon Java thread per runtime receives native events. Kestara sends each peer's callbacks to its configured Java executor in event order. Application callbacks do not run on Rust protocol threads.
+
+Blocking Java operations use the configured operation timeout. Runtime shutdown uses `WebRtcRuntimeOptions.shutdownTimeout()`.
 
 ## Build
 
@@ -117,7 +154,7 @@ Maintainers can publish a signed cross-platform release with the [release workfl
 
 ## Architecture
 
-The Java layer owns the public API and application event dispatch. The Rust layer owns WebRTC protocol state, networking, and native resource cleanup. JNI is a small handle-based boundary between these layers.
+The Java layer owns the public API and application event dispatch. Each Rust runtime owns its WebRTC state, networking, command queue, and native resource cleanup. JNI is a small handle-based boundary between these layers.
 
 Each Java and native release declares an ABI version. Library startup stops when these versions differ. The public API does not expose EnderDash signaling, RPC, Minecraft, JNI, or Rust implementation types.
 

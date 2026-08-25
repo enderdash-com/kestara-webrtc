@@ -4,8 +4,9 @@ import com.enderdash.kestara.webrtc.internal.NativeBindings;
 import com.enderdash.kestara.webrtc.internal.NativeEvent;
 import java.nio.ByteBuffer;
 import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
 import java.util.concurrent.Executor;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
 /** A bidirectional WebRTC DataChannel. */
@@ -14,13 +15,18 @@ public final class DataChannel implements AutoCloseable {
     private static final Consumer<String> NOOP_ERROR = ignored -> {};
     private static final DataChannelMessageHandler NOOP_MESSAGE = new DataChannelMessageHandler() {};
 
+    private final WebRtcRuntime runtime;
     private final long handle;
     private final String label;
     private final String protocol;
     private final boolean ordered;
+    private final long operationTimeoutMillis;
     private final Executor callbackExecutor;
-    private final AtomicBoolean closed = new AtomicBoolean();
-    private final AtomicBoolean openNotified = new AtomicBoolean();
+    private final Runnable onTerminal;
+    private final Object closeLock = new Object();
+    private CompletableFuture<Void> closeFuture;
+    private boolean closed;
+    private boolean openNotified;
     private volatile DataChannelState state;
     private volatile Runnable onOpen = NOOP;
     private volatile Runnable onClosing = NOOP;
@@ -29,18 +35,24 @@ public final class DataChannel implements AutoCloseable {
     private volatile DataChannelMessageHandler onMessage = NOOP_MESSAGE;
 
     DataChannel(
+            WebRtcRuntime runtime,
             long handle,
             String label,
             String protocol,
             boolean ordered,
+            long operationTimeoutMillis,
             Executor callbackExecutor,
-            boolean initiallyOpen) {
+            boolean initiallyOpen,
+            Runnable onTerminal) {
+        this.runtime = Objects.requireNonNull(runtime, "runtime");
         this.handle = handle;
         this.label = Objects.requireNonNull(label, "label");
         this.protocol = Objects.requireNonNull(protocol, "protocol");
         this.ordered = ordered;
+        this.operationTimeoutMillis = operationTimeoutMillis;
         this.callbackExecutor = Objects.requireNonNull(callbackExecutor, "callbackExecutor");
-        this.state = initiallyOpen ? DataChannelState.OPEN : DataChannelState.CONNECTING;
+        this.onTerminal = Objects.requireNonNull(onTerminal, "onTerminal");
+        state = initiallyOpen ? DataChannelState.OPEN : DataChannelState.CONNECTING;
     }
 
     /**
@@ -134,61 +146,110 @@ public final class DataChannel implements AutoCloseable {
     }
 
     /**
-     * Sends a UTF-8 text message.
+     * Sends a UTF-8 text message without blocking the caller.
      *
-     * @param text the text
+     * @param text the message
+     * @return the send stage
      */
-    public void send(String text) {
+    public CompletionStage<Void> sendAsync(String text) {
         Objects.requireNonNull(text, "text");
         requireOpen();
-        NativeBindings.sendDataChannelText(handle, text);
+        return runtime.sendTextAsync(handle, text, operationTimeoutMillis);
     }
 
     /**
-     * Sends a binary message.
+     * Sends a UTF-8 text message and waits for native acceptance.
      *
-     * @param data the data; Kestara copies it before this method returns
+     * @param text the message
      */
-    public void send(byte[] data) {
+    public void send(String text) {
+        runtime.await(sendAsync(text), operationTimeoutMillis);
+    }
+
+    /**
+     * Sends a binary message without blocking the caller.
+     *
+     * @param data the data, which is copied before this method returns
+     * @return the send stage
+     */
+    public CompletionStage<Void> sendAsync(byte[] data) {
         Objects.requireNonNull(data, "data");
         requireOpen();
-        NativeBindings.sendDataChannelBinary(handle, data);
+        return runtime.sendBinaryAsync(handle, data.clone(), operationTimeoutMillis);
     }
 
     /**
-     * Sends the remaining bytes in a buffer without changing its position.
+     * Sends a binary message and waits for native acceptance.
      *
-     * @param data the data; Kestara copies it before this method returns
+     * @param data the data, which is copied before this method returns
      */
-    public void send(ByteBuffer data) {
-        Objects.requireNonNull(data, "data");
-        byte[] copy = new byte[data.remaining()];
-        data.duplicate().get(copy);
-        send(copy);
+    public void send(byte[] data) {
+        runtime.await(sendAsync(data), operationTimeoutMillis);
     }
 
-    /** Starts closing the channel. This method has no effect after the first call. */
+    /**
+     * Sends the remaining bytes in a buffer without changing its position or blocking the caller.
+     *
+     * @param data the source data, which is copied before this method returns
+     * @return the send stage
+     */
+    public CompletionStage<Void> sendAsync(ByteBuffer data) {
+        Objects.requireNonNull(data, "data");
+        requireOpen();
+        byte[] copy = new byte[data.remaining()];
+        data.duplicate().get(copy);
+        return runtime.sendBinaryAsync(handle, copy, operationTimeoutMillis);
+    }
+
+    /**
+     * Sends the remaining bytes in a buffer and waits for native acceptance.
+     *
+     * @param data the source data, which is copied before this method returns
+     */
+    public void send(ByteBuffer data) {
+        runtime.await(sendAsync(data), operationTimeoutMillis);
+    }
+
+    /**
+     * Starts closing the channel without blocking the caller.
+     *
+     * @return the shared close stage
+     */
+    public CompletionStage<Void> closeAsync() {
+        synchronized (closeLock) {
+            if (closeFuture != null) {
+                return closeFuture;
+            }
+            state = DataChannelState.CLOSING;
+            closeFuture = new CompletableFuture<>();
+            runtime.closeDataChannelAsync(handle, operationTimeoutMillis)
+                    .whenComplete((ignored, error) -> {
+                        markClosed();
+                        if (error == null) {
+                            closeFuture.complete(null);
+                        } else {
+                            closeFuture.completeExceptionally(error);
+                        }
+                    });
+            return closeFuture;
+        }
+    }
+
+    /** Starts closing the channel and waits for native completion. */
     @Override
     public void close() {
-        if (!closed.compareAndSet(false, true)) {
-            return;
-        }
-        state = DataChannelState.CLOSING;
-        NativeBindings.closeDataChannel(handle);
+        runtime.await(closeAsync(), operationTimeoutMillis);
     }
 
     void handleNativeEvent(NativeEvent event) {
         switch (event.kind()) {
-            case NativeBindings.EVENT_DATA_CHANNEL_OPEN -> {
-                callbackExecutor.execute(this::notifyOpen);
-            }
+            case NativeBindings.EVENT_DATA_CHANNEL_OPEN -> callbackExecutor.execute(this::notifyOpen);
             case NativeBindings.EVENT_DATA_CHANNEL_CLOSING -> {
                 state = DataChannelState.CLOSING;
                 callbackExecutor.execute(onClosing);
             }
             case NativeBindings.EVENT_DATA_CHANNEL_CLOSED -> {
-                closed.set(true);
-                state = DataChannelState.CLOSED;
+                markClosed();
                 callbackExecutor.execute(onClosed);
             }
             case NativeBindings.EVENT_DATA_CHANNEL_ERROR ->
@@ -201,20 +262,34 @@ public final class DataChannel implements AutoCloseable {
                 ByteBuffer buffer = ByteBuffer.wrap(payload).asReadOnlyBuffer();
                 callbackExecutor.execute(() -> onMessage.onBinary(buffer));
             }
-            default -> throw new IllegalArgumentException("Unsupported DataChannel event: " + event.kind());
+            default -> throw new IllegalArgumentException(
+                    "Unsupported DataChannel event: " + event.kind());
         }
     }
 
     void markClosed() {
-        closed.set(true);
-        state = DataChannelState.CLOSED;
+        synchronized (closeLock) {
+            if (closed) {
+                return;
+            }
+            closed = true;
+            state = DataChannelState.CLOSED;
+            onTerminal.run();
+            if (closeFuture == null) {
+                closeFuture = CompletableFuture.completedFuture(null);
+            }
+        }
     }
 
     void notifyOpen() {
-        if (openNotified.compareAndSet(false, true)) {
+        synchronized (closeLock) {
+            if (openNotified || closed) {
+                return;
+            }
+            openNotified = true;
             state = DataChannelState.OPEN;
-            onOpen.run();
         }
+        onOpen.run();
     }
 
     private void requireOpen() {
