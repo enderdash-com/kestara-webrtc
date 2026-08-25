@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc.internal;
+package com.enderdash.kestara.webrtc.internal;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -28,10 +28,10 @@ final class NativeLibraryLoader {
         try (InputStream library = NativeLibraryLoader.class.getResourceAsStream(resourcePath)) {
             if (library == null) {
                 throw new UnsatisfiedLinkError(
-                        "Alloy WebRTC does not include a native library for " + platform.platformName());
+                        "Kestara WebRTC does not include a native library for " + platform.platformName());
             }
 
-            Path directory = Files.createTempDirectory("alloy-webrtc-");
+            Path directory = Files.createTempDirectory("kestara-webrtc-");
             Path extractedLibrary = directory.resolve(platform.libraryName());
             Files.copy(library, extractedLibrary, StandardCopyOption.REPLACE_EXISTING);
             extractedLibrary.toFile().deleteOnExit();
@@ -53,14 +53,14 @@ final class NativeLibraryLoader {
             String architecture = normalizeArchitecture(System.getProperty("os.arch", ""));
 
             if (osName.startsWith("windows")) {
-                return new Platform("windows", architecture, "alloy_webrtc_native.dll", osName);
+                return new Platform("windows", architecture, "kestara_webrtc_native.dll", osName);
             }
             if (osName.startsWith("mac")) {
                 return new Platform(
-                        "macos", architecture, "liballoy_webrtc_native.dylib", osName);
+                        "macos", architecture, "libkestara_webrtc_native.dylib", osName);
             }
             if (osName.startsWith("linux")) {
-                return new Platform("linux", architecture, "liballoy_webrtc_native.so", osName);
+                return new Platform("linux", architecture, "libkestara_webrtc_native.so", osName);
             }
             throw new UnsupportedOperationException("Unsupported operating system: " + osName);
         }

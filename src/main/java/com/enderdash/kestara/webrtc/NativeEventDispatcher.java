@@ -1,7 +1,7 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
-import com.enderdash.alloy.webrtc.internal.NativeBindings;
-import com.enderdash.alloy.webrtc.internal.NativeEvent;
+import com.enderdash.kestara.webrtc.internal.NativeBindings;
+import com.enderdash.kestara.webrtc.internal.NativeEvent;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -57,7 +57,7 @@ final class NativeEventDispatcher {
                 return;
             }
             running = true;
-            thread = new Thread(NativeEventDispatcher::run, "alloy-webrtc-events");
+            thread = new Thread(NativeEventDispatcher::run, "kestara-webrtc-events");
             thread.setDaemon(true);
             thread.start();
         }
@@ -76,7 +76,7 @@ final class NativeEventDispatcher {
                 } catch (RuntimeException error) {
                     LOGGER.log(
                             System.Logger.Level.WARNING,
-                            "Failed to dispatch an Alloy WebRTC event",
+                            "Failed to dispatch a Kestara WebRTC event",
                             error);
                 }
             }

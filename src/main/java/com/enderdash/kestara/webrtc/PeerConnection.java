@@ -1,8 +1,8 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
-import com.enderdash.alloy.webrtc.internal.NativeBindings;
-import com.enderdash.alloy.webrtc.internal.NativeEvent;
-import com.enderdash.alloy.webrtc.internal.SerialExecutor;
+import com.enderdash.kestara.webrtc.internal.NativeBindings;
+import com.enderdash.kestara.webrtc.internal.NativeEvent;
+import com.enderdash.kestara.webrtc.internal.SerialExecutor;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;

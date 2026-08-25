@@ -412,7 +412,7 @@ fn get_channel(channel_handle: u64) -> Result<(Arc<dyn DataChannel>, u64), Strin
 fn lock_registry() -> Result<std::sync::MutexGuard<'static, Registry>, String> {
     REGISTRY
         .lock()
-        .map_err(|_| "Alloy WebRTC handle registry is poisoned".to_owned())
+        .map_err(|_| "Kestara WebRTC handle registry is poisoned".to_owned())
 }
 
 fn next_handle() -> u64 {

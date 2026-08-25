@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
 /** Reports a WebRTC operation error from the native runtime. */
 public final class WebRtcException extends RuntimeException {

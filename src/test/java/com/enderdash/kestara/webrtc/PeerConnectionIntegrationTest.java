@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -20,7 +20,7 @@ import org.junit.jupiter.api.Test;
 class PeerConnectionIntegrationTest {
     @AfterEach
     void stopNativeRuntime() {
-        AlloyWebRtc.shutdown();
+        KestaraWebRtc.shutdown();
     }
 
     @Test
@@ -34,7 +34,7 @@ class PeerConnectionIntegrationTest {
     void shutdownClosesRemainingPeersAndAllowsRuntimeRestart() {
         PeerConnection first = PeerConnection.create(PeerConnectionConfiguration.DEFAULT);
 
-        AlloyWebRtc.shutdown();
+        KestaraWebRtc.shutdown();
 
         assertTrue(first.state() == PeerConnectionState.CLOSED);
         try (PeerConnection second =
@@ -76,7 +76,7 @@ class PeerConnectionIntegrationTest {
                 });
             });
 
-            DataChannel channel = offerer.createDataChannel("alloy-test");
+            DataChannel channel = offerer.createDataChannel("kestara-test");
             channel.onOpen(offererOpen::countDown);
 
             SessionDescription offer = offerer.createOffer();

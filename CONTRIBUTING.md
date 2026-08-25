@@ -1,6 +1,6 @@
 # Contributing
 
-Alloy WebRTC accepts focused bug reports and pull requests.
+Kestara WebRTC accepts focused bug reports and pull requests.
 
 ## Prepare the repository
 

@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
 /** Describes the aggregate state of a peer connection. */
 public enum PeerConnectionState {

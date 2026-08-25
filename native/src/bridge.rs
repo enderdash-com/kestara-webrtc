@@ -13,7 +13,7 @@ use crate::registry::{self, DataChannelConfiguration, PeerConfiguration};
 use crate::runtime;
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeAbiVersion(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeAbiVersion(
     _env: EnvUnowned<'_>,
     _class: JClass<'_>,
 ) -> jint {
@@ -21,7 +21,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeLibraryVersion(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeLibraryVersion(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
 ) -> jstring {
@@ -33,7 +33,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeCreatePeer(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCreatePeer(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     urls: JObjectArray<'_, JString<'_>>,
@@ -93,7 +93,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeCreateDescription(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCreateDescription(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     peer_handle: jlong,
@@ -117,7 +117,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeSetLocalDescription(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSetLocalDescription(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     peer_handle: jlong,
@@ -143,7 +143,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeSetRemoteDescription(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSetRemoteDescription(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     peer_handle: jlong,
@@ -169,7 +169,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeAddIceCandidate(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeAddIceCandidate(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     peer_handle: jlong,
@@ -204,7 +204,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeCreateDataChannel(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCreateDataChannel(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     peer_handle: jlong,
@@ -246,7 +246,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeSendDataChannelText(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSendDataChannelText(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     channel_handle: jlong,
@@ -263,7 +263,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeSendDataChannelBinary(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSendDataChannelBinary(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     channel_handle: jlong,
@@ -280,7 +280,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeCloseDataChannel(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeCloseDataChannel(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     channel_handle: jlong,
@@ -294,7 +294,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeClosePeer(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeClosePeer(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     peer_handle: jlong,
@@ -311,7 +311,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativePollEvent(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativePollEvent(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
     timeout_millis: jlong,
@@ -329,7 +329,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
                 None => JObject::null(),
             };
             let object = env.new_object(
-                jni_str!("com/enderdash/alloy/webrtc/internal/NativeEvent"),
+                jni_str!("com/enderdash/kestara/webrtc/internal/NativeEvent"),
                 jni_sig!("(IJJLjava/lang/String;Ljava/lang/String;I[B)V"),
                 &[
                     JValue::Int(event.kind),
@@ -347,7 +347,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeWakeEventLoop(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeWakeEventLoop(
     _env: EnvUnowned<'_>,
     _class: JClass<'_>,
 ) {
@@ -355,7 +355,7 @@ pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_n
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_alloy_webrtc_internal_NativeBindings_nativeShutdown(
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeShutdown(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
 ) {
@@ -418,7 +418,7 @@ fn operation_result<T: Default>(
         Ok(value) => Ok(value),
         Err(message) => {
             env.throw_new(
-                jni_str!("com/enderdash/alloy/webrtc/WebRtcException"),
+                jni_str!("com/enderdash/kestara/webrtc/WebRtcException"),
                 JNIString::from(message),
             )?;
             Ok(T::default())

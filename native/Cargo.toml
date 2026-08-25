@@ -1,11 +1,11 @@
 [package]
-name = "alloy-webrtc-native"
+name = "kestara-webrtc-native"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
-description = "Native WebRTC runtime for Alloy WebRTC"
+description = "Native WebRTC runtime for Kestara WebRTC"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/enderdash-com/alloy-webrtc"
+repository = "https://github.com/enderdash-com/kestara-webrtc"
 publish = false
 
 [lib]

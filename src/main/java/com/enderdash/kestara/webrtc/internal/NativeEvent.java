@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc.internal;
+package com.enderdash.kestara.webrtc.internal;
 
 /**
  * One event copied from the Rust runtime.

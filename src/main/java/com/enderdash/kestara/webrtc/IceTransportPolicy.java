@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
 /** Selects the ICE candidate types that a peer connection can use. */
 public enum IceTransportPolicy {

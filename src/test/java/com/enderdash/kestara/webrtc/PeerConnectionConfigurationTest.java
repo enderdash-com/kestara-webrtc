@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -11,7 +11,7 @@ class PeerConnectionConfigurationTest {
     @Test
     void copiesIceServersAndPortRange() {
         IceServer server = IceServer.authenticated(
-                "alloy-user", "alloy-secret", "turn:turn.example.com:3478");
+                "kestara-user", "kestara-secret", "turn:turn.example.com:3478");
 
         PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
                 .withIceServers(List.of(server))

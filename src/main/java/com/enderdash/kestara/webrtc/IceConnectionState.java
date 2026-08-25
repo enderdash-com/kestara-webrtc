@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
 /** Describes the state of ICE connectivity. */
 public enum IceConnectionState {

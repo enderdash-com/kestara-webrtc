@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
 /** Identifies the negotiation role of an SDP session description. */
 public enum SessionDescriptionType {

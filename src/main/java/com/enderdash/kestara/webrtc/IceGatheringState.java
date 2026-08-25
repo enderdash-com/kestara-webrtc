@@ -1,4 +1,4 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
 /** Describes the state of local ICE candidate gathering. */
 public enum IceGatheringState {

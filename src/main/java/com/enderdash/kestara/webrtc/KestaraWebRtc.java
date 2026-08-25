@@ -1,9 +1,9 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
-import com.enderdash.alloy.webrtc.internal.NativeBindings;
+import com.enderdash.kestara.webrtc.internal.NativeBindings;
 
-/** Provides metadata and entry points for Alloy WebRTC. */
-public final class AlloyWebRtc {
+/** Provides metadata and entry points for Kestara WebRTC. */
+public final class KestaraWebRtc {
     /** The native ABI required by this Java API. */
     public static final int NATIVE_ABI_VERSION = 2;
 
@@ -11,14 +11,14 @@ public final class AlloyWebRtc {
         int actualVersion = NativeBindings.abiVersion();
         if (actualVersion != NATIVE_ABI_VERSION) {
             throw new LinkageError(
-                    "Alloy WebRTC native ABI mismatch: expected "
+                    "Kestara WebRTC native ABI mismatch: expected "
                             + NATIVE_ABI_VERSION
                             + ", found "
                             + actualVersion);
         }
     }
 
-    private AlloyWebRtc() {}
+    private KestaraWebRtc() {}
 
     /**
      * Returns the ABI version of the loaded native library.

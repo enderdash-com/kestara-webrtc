@@ -1,9 +1,9 @@
-package com.enderdash.alloy.webrtc.internal;
+package com.enderdash.kestara.webrtc.internal;
 
 import java.util.Objects;
 
 /**
- * JNI methods implemented by the Alloy WebRTC native library.
+ * JNI methods implemented by the Kestara WebRTC native library.
  *
  * @hidden
  */

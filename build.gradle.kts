@@ -44,9 +44,9 @@ val nativeArch = when (System.getProperty("os.arch").lowercase()) {
 }
 
 val nativeLibraryName = when (nativeOs) {
-  "windows" -> "alloy_webrtc_native.dll"
-  "macos" -> "liballoy_webrtc_native.dylib"
-  else -> "liballoy_webrtc_native.so"
+  "windows" -> "kestara_webrtc_native.dll"
+  "macos" -> "libkestara_webrtc_native.dylib"
+  else -> "libkestara_webrtc_native.so"
 }
 
 val nativeManifest = layout.projectDirectory.file("native/Cargo.toml")
@@ -121,12 +121,12 @@ publishing {
   publications {
     create<MavenPublication>("mavenJava") {
       from(components["java"])
-      artifactId = "alloy-webrtc"
+      artifactId = "kestara-webrtc"
 
       pom {
-        name.set("Alloy WebRTC")
+        name.set("Kestara WebRTC")
         description.set("A WebRTC DataChannel library for Java, powered by Rust.")
-        url.set("https://github.com/enderdash-com/alloy-webrtc")
+        url.set("https://github.com/enderdash-com/kestara-webrtc")
         licenses {
           license {
             name.set("Apache License 2.0")
@@ -146,9 +146,9 @@ publishing {
           }
         }
         scm {
-          connection.set("scm:git:https://github.com/enderdash-com/alloy-webrtc.git")
-          developerConnection.set("scm:git:ssh://git@github.com/enderdash-com/alloy-webrtc.git")
-          url.set("https://github.com/enderdash-com/alloy-webrtc")
+          connection.set("scm:git:https://github.com/enderdash-com/kestara-webrtc.git")
+          developerConnection.set("scm:git:ssh://git@github.com/enderdash-com/kestara-webrtc.git")
+          url.set("https://github.com/enderdash-com/kestara-webrtc")
         }
       }
     }

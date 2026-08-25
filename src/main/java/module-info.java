@@ -1,4 +1,4 @@
-/** Provides the public Alloy WebRTC API. */
-module com.enderdash.alloy.webrtc {
-    exports com.enderdash.alloy.webrtc;
+/** Provides the public Kestara WebRTC API. */
+module com.enderdash.kestara.webrtc {
+    exports com.enderdash.kestara.webrtc;
 }

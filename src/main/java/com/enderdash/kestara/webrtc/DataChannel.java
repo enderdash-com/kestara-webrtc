@@ -1,7 +1,7 @@
-package com.enderdash.alloy.webrtc;
+package com.enderdash.kestara.webrtc;
 
-import com.enderdash.alloy.webrtc.internal.NativeBindings;
-import com.enderdash.alloy.webrtc.internal.NativeEvent;
+import com.enderdash.kestara.webrtc.internal.NativeBindings;
+import com.enderdash.kestara.webrtc.internal.NativeEvent;
 import java.nio.ByteBuffer;
 import java.util.Objects;
 import java.util.concurrent.Executor;
@@ -147,7 +147,7 @@ public final class DataChannel implements AutoCloseable {
     /**
      * Sends a binary message.
      *
-     * @param data the data; Alloy copies it before this method returns
+     * @param data the data; Kestara copies it before this method returns
      */
     public void send(byte[] data) {
         Objects.requireNonNull(data, "data");
@@ -158,7 +158,7 @@ public final class DataChannel implements AutoCloseable {
     /**
      * Sends the remaining bytes in a buffer without changing its position.
      *
-     * @param data the data; Alloy copies it before this method returns
+     * @param data the data; Kestara copies it before this method returns
      */
     public void send(ByteBuffer data) {
         Objects.requireNonNull(data, "data");

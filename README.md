@@ -1,9 +1,9 @@
-# Alloy WebRTC
+# Kestara WebRTC
 
-Alloy WebRTC is a WebRTC DataChannel library for Java. It provides a small Java API over the Rust `webrtc` implementation.
+Kestara WebRTC is a WebRTC DataChannel library for Java. It provides a small Java API over the Rust `webrtc` implementation.
 
 > [!IMPORTANT]
-> Alloy WebRTC is in early development. Test it with your own network and TURN setup before you use it in production.
+> Kestara WebRTC is in early development. Test it with your own network and TURN setup before you use it in production.
 
 ## Features
 
@@ -30,7 +30,7 @@ Contributors also need Rust 1.94.1. Application builds do not compile Rust after
 The stable Maven coordinate will be:
 
 ```kotlin
-implementation("com.enderdash:alloy-webrtc:0.1.0")
+implementation("com.enderdash:kestara-webrtc:0.1.0")
 ```
 
 No public release exists yet. Development snapshots are available from JitPack after a successful build:
@@ -41,7 +41,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.github.enderdash-com:alloy-webrtc:main-SNAPSHOT")
+    implementation("com.github.enderdash-com:kestara-webrtc:main-SNAPSHOT")
 }
 ```
 
@@ -50,12 +50,12 @@ Use a commit hash instead of `main-SNAPSHOT` when a build must be reproducible. 
 ## Quick start
 
 ```java
-import com.enderdash.alloy.webrtc.IceCandidate;
-import com.enderdash.alloy.webrtc.IceServer;
-import com.enderdash.alloy.webrtc.PeerConnection;
-import com.enderdash.alloy.webrtc.PeerConnectionConfiguration;
-import com.enderdash.alloy.webrtc.SessionDescription;
-import com.enderdash.alloy.webrtc.SessionDescriptionType;
+import com.enderdash.kestara.webrtc.IceCandidate;
+import com.enderdash.kestara.webrtc.IceServer;
+import com.enderdash.kestara.webrtc.PeerConnection;
+import com.enderdash.kestara.webrtc.PeerConnectionConfiguration;
+import com.enderdash.kestara.webrtc.SessionDescription;
+import com.enderdash.kestara.webrtc.SessionDescriptionType;
 import java.util.List;
 
 var configuration = PeerConnectionConfiguration.DEFAULT.withIceServers(List.of(
@@ -79,13 +79,13 @@ try (var peer = PeerConnection.create(configuration)) {
 
 The application provides signaling. It must send local descriptions and ICE candidates to the remote peer.
 
-Set each callback before an operation that can produce its event. Incoming DataChannel callbacks can register message and lifecycle handlers before Alloy reports an already-open channel.
+Set each callback before an operation that can produce its event. Incoming DataChannel callbacks can register message and lifecycle handlers before Kestara reports an already-open channel.
 
 ## Lifecycle and threads
 
-`PeerConnection` and `DataChannel` implement `AutoCloseable`. Close each object when it is no longer needed. Call `AlloyWebRtc.shutdown()` during application shutdown to close remaining peers and release the shared native runtime.
+`PeerConnection` and `DataChannel` implement `AutoCloseable`. Close each object when it is no longer needed. Call `KestaraWebRtc.shutdown()` during application shutdown to close remaining peers and release the shared native runtime.
 
-Rust protocol tasks run on an Alloy-owned Tokio runtime. One daemon Java thread receives native events. Alloy sends each peer's callbacks to its configured Java executor in event order. Application callbacks do not run on Rust protocol threads.
+Rust protocol tasks run on a Kestara-owned Tokio runtime. One daemon Java thread receives native events. Kestara sends each peer's callbacks to its configured Java executor in event order. Application callbacks do not run on Rust protocol threads.
 
 Blocking Java operations use the configured operation timeout. Native runtime shutdown also has a fixed upper time limit. These limits prevent a stalled protocol task from blocking Java shutdown without a bound.
 
@@ -119,4 +119,4 @@ Before the first stable release, the project still needs cross-platform artifact
 
 ## License
 
-Alloy WebRTC is available under the Apache License 2.0 or the MIT License, at your option.
+Kestara WebRTC is available under the Apache License 2.0 or the MIT License, at your option.
