@@ -47,30 +47,6 @@ public final class PeerConnection implements AutoCloseable {
     }
 
     /**
-     * Creates a peer on a lazily initialized shared runtime.
-     *
-     * <p>Applications that need explicit ownership should use {@link
-     * WebRtcRuntime#createPeerConnection}.
-     *
-     * @param configuration the peer configuration
-     * @return the peer connection
-     */
-    public static PeerConnection create(PeerConnectionConfiguration configuration) {
-        return KestaraWebRtc.defaultRuntime().createPeerConnection(configuration);
-    }
-
-    /**
-     * Creates a peer asynchronously on a lazily initialized shared runtime.
-     *
-     * @param configuration the peer configuration
-     * @return a stage that completes with the peer
-     */
-    public static CompletionStage<PeerConnection> createAsync(
-            PeerConnectionConfiguration configuration) {
-        return KestaraWebRtc.defaultRuntime().createPeerConnectionAsync(configuration);
-    }
-
-    /**
      * Returns the aggregate peer state.
      *
      * @return the peer state

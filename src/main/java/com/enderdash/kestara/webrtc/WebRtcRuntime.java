@@ -61,7 +61,7 @@ public final class WebRtcRuntime implements AutoCloseable {
      */
     public static WebRtcRuntime create(WebRtcRuntimeOptions options) {
         Objects.requireNonNull(options, "options");
-        KestaraWebRtc.ensureNativeCompatibility();
+        KestaraWebRtc.ensureNativeAbi();
         long handle = NativeBindings.nativeCreateRuntime(options.workerThreads());
         return new WebRtcRuntime(handle, options);
     }

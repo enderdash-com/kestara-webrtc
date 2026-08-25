@@ -109,8 +109,6 @@ try (WebRtcRuntime runtime = WebRtcRuntime.create(options)) {
 }
 ```
 
-`PeerConnection.create(...)` remains available as a convenience. It uses a shared runtime. Call `KestaraWebRtc.shutdown()` when the application no longer needs that shared runtime.
-
 ## Asynchronous operations
 
 Native peer and DataChannel operations return `CompletionStage` variants. They enqueue work on the owning Rust runtime instead of blocking the Java caller.

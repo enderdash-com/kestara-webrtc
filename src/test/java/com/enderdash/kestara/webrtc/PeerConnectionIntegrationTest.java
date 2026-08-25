@@ -16,31 +16,29 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 class PeerConnectionIntegrationTest {
-    @AfterEach
-    void stopNativeRuntime() {
-        KestaraWebRtc.shutdown();
-    }
-
     @Test
     void createsAndClosesPeerConnection() {
-        try (PeerConnection peer = PeerConnection.create(PeerConnectionConfiguration.DEFAULT)) {
+        try (WebRtcRuntime runtime = WebRtcRuntime.create();
+                PeerConnection peer =
+                        runtime.createPeerConnection(PeerConnectionConfiguration.DEFAULT)) {
             assertNotNull(peer);
         }
     }
 
     @Test
-    void shutdownClosesRemainingPeersAndAllowsRuntimeRestart() {
-        PeerConnection first = PeerConnection.create(PeerConnectionConfiguration.DEFAULT);
+    void runtimeCloseClosesRemainingPeersAndAllowsANewRuntime() {
+        PeerConnection first;
+        try (WebRtcRuntime runtime = WebRtcRuntime.create()) {
+            first = runtime.createPeerConnection(PeerConnectionConfiguration.DEFAULT);
+        }
 
-        KestaraWebRtc.shutdown();
-
-        assertTrue(first.state() == PeerConnectionState.CLOSED);
-        try (PeerConnection second =
-                PeerConnection.create(PeerConnectionConfiguration.DEFAULT)) {
+        assertEquals(PeerConnectionState.CLOSED, first.state());
+        try (WebRtcRuntime runtime = WebRtcRuntime.create();
+                PeerConnection second =
+                        runtime.createPeerConnection(PeerConnectionConfiguration.DEFAULT)) {
             assertNotNull(second);
         }
     }
@@ -84,8 +82,9 @@ class PeerConnectionIntegrationTest {
         PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
                 .withCallbackExecutor(callbacks)
                 .withOperationTimeout(Duration.ofSeconds(5));
-        try (PeerConnection offerer = PeerConnection.create(configuration);
-                PeerConnection answerer = PeerConnection.create(configuration)) {
+        try (WebRtcRuntime runtime = WebRtcRuntime.create();
+                PeerConnection offerer = runtime.createPeerConnection(configuration);
+                PeerConnection answerer = runtime.createPeerConnection(configuration)) {
             CandidateRelay offererCandidates = new CandidateRelay(answerer);
             CandidateRelay answererCandidates = new CandidateRelay(offerer);
             offerer.onLocalCandidate(offererCandidates::accept);
