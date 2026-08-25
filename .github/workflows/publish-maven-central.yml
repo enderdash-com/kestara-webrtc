@@ -89,7 +89,7 @@ jobs:
 
       - name: Configure MSVC
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@460a772e4cf7358f9f2f23773240813e40e7a894
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
         with:
           arch: ${{ matrix.msvc_arch }}
 
