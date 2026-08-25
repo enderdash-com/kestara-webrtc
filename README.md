@@ -1,5 +1,7 @@
 # Kestara WebRTC
 
+[![Maven Central](https://img.shields.io/maven-central/v/com.enderdash/kestara-webrtc.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/com.enderdash/kestara-webrtc)
+
 Kestara WebRTC is a WebRTC DataChannel library for Java. It provides a small Java API over the Rust `webrtc` implementation.
 
 > [!IMPORTANT]
@@ -111,7 +113,7 @@ Create the host-platform JAR:
 
 Gradle builds the Rust library for the current operating system and architecture. It adds the library under `META-INF/native` in the JAR.
 
-Maintainers can publish a signed cross-platform release with the [Maven Central publishing workflow](./PUBLISHING.md).
+Maintainers can publish a signed cross-platform release with the [release workflow](./PUBLISHING.md).
 
 ## Architecture
 
