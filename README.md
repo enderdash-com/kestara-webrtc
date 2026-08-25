@@ -49,7 +49,7 @@ repositories {
 }
 
 dependencies {
-    implementation("com.enderdash:kestara-webrtc:0.1.0")
+    implementation("com.enderdash:kestara-webrtc:0.2.0")
 }
 ```
 
@@ -59,7 +59,7 @@ dependencies {
 <dependency>
     <groupId>com.enderdash</groupId>
     <artifactId>kestara-webrtc</artifactId>
-    <version>0.1.0</version>
+    <version>0.2.0</version>
 </dependency>
 ```
 
