@@ -38,6 +38,8 @@ public final class NativeBindings {
 
     public static native long nativeCreateRuntime(int workerThreads);
 
+    public static native String nativeRuntimeCertificateFingerprint(long runtime);
+
     public static native void nativeSubmitCreatePeer(
             long runtime,
             long operation,
@@ -47,7 +49,39 @@ public final class NativeBindings {
             int minPort,
             int maxPort,
             int iceTransportPolicy,
-            int dataChannelSendBufferLimit,
+            long disconnectedTimeoutMillis,
+            long failedTimeoutMillis,
+            long keepAliveIntervalMillis,
+            long checkIntervalMillis,
+            int maxBindingRequests,
+            long hostAcceptanceMinWaitMillis,
+            long serverReflexiveAcceptanceMinWaitMillis,
+            long peerReflexiveAcceptanceMinWaitMillis,
+            long relayAcceptanceMinWaitMillis,
+            int networkTypeMask,
+            int mdnsMode,
+            long mdnsQueryTimeoutMillis,
+            boolean iceLite,
+            String[] natAddresses,
+            int natMappingType,
+            boolean discardLocalCandidatesOnRestart,
+            int candidatePoolSize,
+            int sctpSendBufferLimit,
+            int sctpReceiveBufferSize,
+            int sctpMaximumMessageSize,
+            long timeoutMillis);
+
+    public static native void nativeSubmitRestartIce(
+            long runtime, long operation, long peer, long timeoutMillis);
+
+    public static native void nativeSubmitSetConfiguration(
+            long runtime,
+            long operation,
+            long peer,
+            String[] urls,
+            String[] usernames,
+            String[] credentials,
+            int iceTransportPolicy,
             long timeoutMillis);
 
     public static native void nativeSubmitCreateDescription(

@@ -1,14 +1,20 @@
 use std::time::Duration;
 
+use ice::mdns::MulticastDnsMode;
+use ice::network_type::NetworkType;
 use jni::errors::ThrowRuntimeExAndDefault;
 use jni::objects::{JByteArray, JClass, JObject, JObjectArray, JString, JValue};
 use jni::strings::JNIString;
 use jni::sys::{jboolean, jint, jlong, jobject, jstring};
 use jni::{Env, EnvUnowned, jni_sig, jni_str};
-use webrtc::peer_connection::{RTCIceCandidateInit, RTCIceServer, RTCSessionDescription};
+use webrtc::peer_connection::{
+    RTCIceCandidateInit, RTCIceCandidateType, RTCIceServer, RTCSessionDescription,
+};
 
 use crate::NATIVE_ABI_VERSION;
-use crate::registry::{DataChannelConfiguration, PeerConfiguration};
+use crate::registry::{
+    DataChannelConfiguration, IceConfiguration, PeerConfiguration, SctpConfiguration,
+};
 use crate::runtime::{self, Command};
 
 #[unsafe(no_mangle)]
@@ -17,6 +23,26 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
     _class: JClass<'_>,
 ) -> jint {
     NATIVE_ABI_VERSION
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeRuntimeCertificateFingerprint(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+) -> jstring {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<jstring> {
+            let result = handle_from_jlong(runtime_handle)
+                .and_then(runtime::certificate_fingerprint)
+                .and_then(|fingerprint| {
+                    env.new_string(fingerprint)
+                        .map(JString::into_raw)
+                        .map_err(|error| error.to_string())
+                });
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>()
 }
 
 #[unsafe(no_mangle)]
@@ -49,6 +75,7 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 }
 
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitCreatePeer(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
@@ -60,7 +87,26 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
     min_port: jint,
     max_port: jint,
     ice_transport_policy: jint,
-    data_channel_send_buffer_limit: jint,
+    disconnected_timeout_millis: jlong,
+    failed_timeout_millis: jlong,
+    keep_alive_interval_millis: jlong,
+    check_interval_millis: jlong,
+    max_binding_requests: jint,
+    host_acceptance_min_wait_millis: jlong,
+    server_reflexive_acceptance_min_wait_millis: jlong,
+    peer_reflexive_acceptance_min_wait_millis: jlong,
+    relay_acceptance_min_wait_millis: jlong,
+    network_type_mask: jint,
+    mdns_mode: jint,
+    mdns_query_timeout_millis: jlong,
+    ice_lite: jboolean,
+    nat_addresses: JObjectArray<'_, JString<'_>>,
+    nat_mapping_type: jint,
+    discard_local_candidates_on_restart: jboolean,
+    candidate_pool_size: jint,
+    sctp_send_buffer_limit: jint,
+    sctp_receive_buffer_size: jint,
+    sctp_maximum_message_size: jint,
     timeout_millis: jlong,
 ) {
     unowned_env
@@ -68,6 +114,7 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
             let urls = read_string_array(env, &urls)?;
             let usernames = read_string_array(env, &usernames)?;
             let credentials = read_string_array(env, &credentials)?;
+            let nat_addresses = read_string_array(env, &nat_addresses)?;
             let result = (|| {
                 let runtime_handle = handle_from_jlong(runtime_handle)?;
                 let operation_handle = handle_from_jlong(operation_handle)?;
@@ -82,10 +129,37 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                 if !(0..=1).contains(&ice_transport_policy) {
                     return Err("Invalid ICE transport policy".to_owned());
                 }
-                let data_channel_send_buffer_limit =
-                    usize::try_from(data_channel_send_buffer_limit).map_err(|_| {
-                        "DataChannel send buffer limit must not be negative".to_owned()
-                    })?;
+                let network_types = network_types(network_type_mask)?;
+                let mdns_mode = match mdns_mode {
+                    0 => MulticastDnsMode::Disabled,
+                    1 => MulticastDnsMode::QueryOnly,
+                    2 => MulticastDnsMode::QueryAndGather,
+                    _ => return Err("Invalid ICE mDNS mode".to_owned()),
+                };
+                let nat_mapping = match nat_mapping_type {
+                    -1 if nat_addresses.is_empty() => None,
+                    0 if !nat_addresses.is_empty() => {
+                        Some((nat_addresses, RTCIceCandidateType::Host))
+                    }
+                    1 if !nat_addresses.is_empty() => {
+                        Some((nat_addresses, RTCIceCandidateType::Srflx))
+                    }
+                    _ => return Err("Invalid ICE NAT mapping".to_owned()),
+                };
+                let sctp_receive_buffer_size =
+                    positive_u32(sctp_receive_buffer_size, "SCTP receive buffer size")?;
+                let sctp_maximum_message_size =
+                    positive_u32(sctp_maximum_message_size, "SCTP maximum message size")?;
+                if sctp_maximum_message_size > 256 * 1024 {
+                    return Err("SCTP maximum message size must not exceed 262144".to_owned());
+                }
+                if sctp_receive_buffer_size < 1_500
+                    || sctp_receive_buffer_size < sctp_maximum_message_size
+                {
+                    return Err(
+                        "SCTP receive buffer size must cover the maximum message size".to_owned(),
+                    );
+                }
                 let timeout = timeout(timeout_millis)?;
                 let ice_servers = urls
                     .into_iter()
@@ -107,8 +181,148 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                             min_port,
                             max_port,
                             relay_only: ice_transport_policy == 1,
-                            data_channel_send_buffer_limit,
+                            ice: IceConfiguration {
+                                disconnected_timeout: optional_duration(
+                                    disconnected_timeout_millis,
+                                    "ICE disconnected timeout",
+                                )?,
+                                failed_timeout: optional_duration(
+                                    failed_timeout_millis,
+                                    "ICE failed timeout",
+                                )?,
+                                keep_alive_interval: optional_duration(
+                                    keep_alive_interval_millis,
+                                    "ICE keep-alive interval",
+                                )?,
+                                check_interval: optional_duration(
+                                    check_interval_millis,
+                                    "ICE check interval",
+                                )?,
+                                max_binding_requests: optional_u16(
+                                    max_binding_requests,
+                                    "maximum ICE binding requests",
+                                )?,
+                                host_acceptance_min_wait: optional_duration(
+                                    host_acceptance_min_wait_millis,
+                                    "host candidate acceptance wait",
+                                )?,
+                                server_reflexive_acceptance_min_wait: optional_duration(
+                                    server_reflexive_acceptance_min_wait_millis,
+                                    "server-reflexive candidate acceptance wait",
+                                )?,
+                                peer_reflexive_acceptance_min_wait: optional_duration(
+                                    peer_reflexive_acceptance_min_wait_millis,
+                                    "peer-reflexive candidate acceptance wait",
+                                )?,
+                                relay_acceptance_min_wait: optional_duration(
+                                    relay_acceptance_min_wait_millis,
+                                    "relay candidate acceptance wait",
+                                )?,
+                                network_types,
+                                mdns_mode,
+                                mdns_query_timeout: optional_duration(
+                                    mdns_query_timeout_millis,
+                                    "mDNS query timeout",
+                                )?,
+                                lite: ice_lite,
+                                nat_mapping,
+                                discard_local_candidates_on_restart,
+                                candidate_pool_size: match candidate_pool_size {
+                                    0 => 0,
+                                    1 => 1,
+                                    _ => {
+                                        return Err(
+                                            "ICE candidate pool size must be 0 or 1".to_owned()
+                                        );
+                                    }
+                                },
+                            },
+                            sctp: SctpConfiguration {
+                                send_buffer_limit: usize::try_from(sctp_send_buffer_limit)
+                                    .map_err(|_| {
+                                        "SCTP send buffer limit must not be negative".to_owned()
+                                    })?,
+                                receive_buffer_size: sctp_receive_buffer_size,
+                                maximum_message_size: sctp_maximum_message_size,
+                            },
                         },
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitRestartIce(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    peer_handle: jlong,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let result = (|| {
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::RestartIce {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        peer_handle: handle_from_jlong(peer_handle)?,
+                    },
+                )
+            })();
+            operation_result(env, result)
+        })
+        .resolve::<ThrowRuntimeExAndDefault>();
+}
+
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitSetConfiguration(
+    mut unowned_env: EnvUnowned<'_>,
+    _class: JClass<'_>,
+    runtime_handle: jlong,
+    operation_handle: jlong,
+    peer_handle: jlong,
+    urls: JObjectArray<'_, JString<'_>>,
+    usernames: JObjectArray<'_, JString<'_>>,
+    credentials: JObjectArray<'_, JString<'_>>,
+    ice_transport_policy: jint,
+    timeout_millis: jlong,
+) {
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<()> {
+            let urls = read_string_array(env, &urls)?;
+            let usernames = read_string_array(env, &usernames)?;
+            let credentials = read_string_array(env, &credentials)?;
+            let result = (|| {
+                if urls.len() != usernames.len() || urls.len() != credentials.len() {
+                    return Err("ICE server arrays must have the same length".to_owned());
+                }
+                if !(0..=1).contains(&ice_transport_policy) {
+                    return Err("Invalid ICE transport policy".to_owned());
+                }
+                let ice_servers = urls
+                    .into_iter()
+                    .zip(usernames)
+                    .zip(credentials)
+                    .map(|((url, username), credential)| RTCIceServer {
+                        urls: vec![url],
+                        username,
+                        credential,
+                    })
+                    .collect();
+                runtime::submit(
+                    handle_from_jlong(runtime_handle)?,
+                    Command::SetConfiguration {
+                        operation_handle: handle_from_jlong(operation_handle)?,
+                        timeout: timeout(timeout_millis)?,
+                        peer_handle: handle_from_jlong(peer_handle)?,
+                        ice_servers,
+                        relay_only: ice_transport_policy == 1,
                     },
                 )
             })();
@@ -604,6 +818,46 @@ fn timeout(millis: jlong) -> Result<Duration, String> {
     let millis =
         u64::try_from(millis).map_err(|_| "Operation timeout must not be negative".to_owned())?;
     Ok(Duration::from_millis(millis))
+}
+
+fn optional_duration(millis: jlong, name: &str) -> Result<Option<Duration>, String> {
+    if millis == -1 {
+        Ok(None)
+    } else {
+        u64::try_from(millis)
+            .map(Duration::from_millis)
+            .map(Some)
+            .map_err(|_| format!("The {name} must not be negative"))
+    }
+}
+
+fn positive_u32(value: jint, name: &str) -> Result<u32, String> {
+    let value = u32::try_from(value).map_err(|_| format!("The {name} must be positive"))?;
+    if value == 0 {
+        Err(format!("The {name} must be positive"))
+    } else {
+        Ok(value)
+    }
+}
+
+fn network_types(mask: jint) -> Result<Vec<NetworkType>, String> {
+    if mask <= 0 || mask & !0b1111 != 0 {
+        return Err("Invalid ICE network type mask".to_owned());
+    }
+    let mut values = Vec::new();
+    if mask & 0b0001 != 0 {
+        values.push(NetworkType::Udp4);
+    }
+    if mask & 0b0010 != 0 {
+        values.push(NetworkType::Udp6);
+    }
+    if mask & 0b0100 != 0 {
+        values.push(NetworkType::Tcp4);
+    }
+    if mask & 0b1000 != 0 {
+        values.push(NetworkType::Tcp6);
+    }
+    Ok(values)
 }
 
 fn port(value: jint, name: &str) -> Result<u16, String> {

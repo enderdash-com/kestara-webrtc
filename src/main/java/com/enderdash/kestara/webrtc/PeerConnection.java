@@ -263,6 +263,48 @@ public final class PeerConnection implements AutoCloseable {
     }
 
     /**
+     * Starts a new ICE generation without blocking the caller.
+     *
+     * <p>Create and signal a new offer after this operation completes.
+     *
+     * @return the operation stage
+     */
+    public CompletionStage<Void> restartIceAsync() {
+        requireOpen();
+        return runtime.restartIceAsync(handle, operationTimeoutMillis);
+    }
+
+    /** Starts a new ICE generation and waits for completion. */
+    public void restartIce() {
+        runtime.await(restartIceAsync(), operationTimeoutMillis);
+    }
+
+    /**
+     * Updates the ICE servers and ICE transport policy without blocking the caller.
+     *
+     * <p>Other fields in the configuration do not change an existing transport. Call
+     * {@link #restartIceAsync()} after this operation to gather with the new configuration.
+     *
+     * @param configuration the new peer configuration
+     * @return the operation stage
+     */
+    public CompletionStage<Void> setConfigurationAsync(
+            PeerConnectionConfiguration configuration) {
+        Objects.requireNonNull(configuration, "configuration");
+        requireOpen();
+        return runtime.setConfigurationAsync(handle, configuration, operationTimeoutMillis);
+    }
+
+    /**
+     * Updates the ICE servers and ICE transport policy and waits for completion.
+     *
+     * @param configuration the new peer configuration
+     */
+    public void setConfiguration(PeerConnectionConfiguration configuration) {
+        runtime.await(setConfigurationAsync(configuration), operationTimeoutMillis);
+    }
+
+    /**
      * Creates an ordered and reliable DataChannel without blocking the caller.
      *
      * @param label the channel label

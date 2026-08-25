@@ -1,21 +1,25 @@
 use std::collections::HashMap;
-use std::net::{Ipv4Addr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use bytes::BytesMut;
 use crossbeam_channel::Sender;
+use ice::mdns::MulticastDnsMode;
+use ice::network_type::NetworkType;
+use rtc::peer_connection::configuration::setting_engine::SctpMaxMessageSize;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::task::JoinSet;
 use webrtc::data_channel::{
     DataChannel, DataChannelEvent, RTCDataChannelInit, RTCDataChannelState,
 };
 use webrtc::peer_connection::{
-    PeerConnection as NativePeerConnection, PeerConnectionBuilder, PeerConnectionEventHandler,
-    RTCConfigurationBuilder, RTCIceCandidateInit, RTCIceConnectionState, RTCIceGatheringState,
-    RTCIceServer, RTCIceTransportPolicy, RTCPeerConnectionIceEvent, RTCPeerConnectionState,
-    RTCSessionDescription,
+    CipherSuiteId, PeerConnection as NativePeerConnection, PeerConnectionBuilder,
+    PeerConnectionEventHandler, RTCCertificate, RTCConfigurationBuilder, RTCIceCandidateInit,
+    RTCIceCandidateType, RTCIceConnectionState, RTCIceGatheringState, RTCIceServer,
+    RTCIceTransportPolicy, RTCPeerConnectionIceEvent, RTCPeerConnectionState,
+    RTCSessionDescription, SettingEngine,
 };
 use webrtc::runtime::TokioRuntime;
 
@@ -31,7 +35,35 @@ pub struct PeerConfiguration {
     pub min_port: u16,
     pub max_port: u16,
     pub relay_only: bool,
-    pub data_channel_send_buffer_limit: usize,
+    pub ice: IceConfiguration,
+    pub sctp: SctpConfiguration,
+}
+
+#[derive(Debug)]
+pub struct IceConfiguration {
+    pub disconnected_timeout: Option<Duration>,
+    pub failed_timeout: Option<Duration>,
+    pub keep_alive_interval: Option<Duration>,
+    pub check_interval: Option<Duration>,
+    pub max_binding_requests: Option<u16>,
+    pub host_acceptance_min_wait: Option<Duration>,
+    pub server_reflexive_acceptance_min_wait: Option<Duration>,
+    pub peer_reflexive_acceptance_min_wait: Option<Duration>,
+    pub relay_acceptance_min_wait: Option<Duration>,
+    pub network_types: Vec<NetworkType>,
+    pub mdns_mode: MulticastDnsMode,
+    pub mdns_query_timeout: Option<Duration>,
+    pub lite: bool,
+    pub nat_mapping: Option<(Vec<String>, RTCIceCandidateType)>,
+    pub discard_local_candidates_on_restart: bool,
+    pub candidate_pool_size: u8,
+}
+
+#[derive(Debug)]
+pub struct SctpConfiguration {
+    pub send_buffer_limit: usize,
+    pub receive_buffer_size: u32,
+    pub maximum_message_size: u32,
 }
 
 #[derive(Debug)]
@@ -64,14 +96,16 @@ pub struct RuntimeState {
     registry: Mutex<Registry>,
     events: Sender<NativeEvent>,
     next_handle: AtomicU64,
+    certificate: RTCCertificate,
 }
 
 impl RuntimeState {
-    pub fn new(events: Sender<NativeEvent>) -> Self {
+    pub fn new(events: Sender<NativeEvent>, certificate: RTCCertificate) -> Self {
         Self {
             registry: Mutex::new(Registry::default()),
             events,
             next_handle: AtomicU64::new(1),
+            certificate,
         }
     }
 
@@ -84,36 +118,79 @@ impl RuntimeState {
         configuration: PeerConfiguration,
     ) -> Result<u64, String> {
         let handle = self.next_handle();
-        let udp_address = choose_udp_address(configuration.min_port, configuration.max_port)?;
         let ice_policy = if configuration.relay_only {
             RTCIceTransportPolicy::Relay
         } else {
             RTCIceTransportPolicy::All
         };
-        let rtc_configuration = RTCConfigurationBuilder::new()
-            .with_ice_servers(configuration.ice_servers)
-            .with_ice_transport_policy(ice_policy)
-            .build();
+        let setting_engine = setting_engine(&configuration);
 
-        let peer = Box::pin(
-            PeerConnectionBuilder::new()
-                .with_configuration(rtc_configuration)
-                .with_handler(Arc::new(EventHandler {
-                    peer_handle: handle,
-                    runtime: Arc::downgrade(self),
-                }))
-                .with_runtime(Arc::new(TokioRuntime))
-                .with_udp_addrs(vec![udp_address])
-                .with_data_channel_send_buffer_limit(configuration.data_channel_send_buffer_limit)
-                .build(),
-        )
-        .await
-        .map_err(|error| format!("Failed to create peer connection: {error}"))?;
+        let handler = Arc::new(EventHandler {
+            peer_handle: handle,
+            runtime: Arc::downgrade(self),
+        });
+        let ports = if configuration.min_port == 0 {
+            vec![0]
+        } else {
+            (configuration.min_port..=configuration.max_port).collect()
+        };
+        let mut last_error = None;
+        let mut peer = None;
+        for port in ports {
+            let (udp_addresses, tcp_addresses) =
+                bind_addresses(&configuration.ice.network_types, port);
+            let rtc_configuration = RTCConfigurationBuilder::new()
+                .with_ice_servers(configuration.ice_servers.clone())
+                .with_ice_transport_policy(ice_policy)
+                .with_certificates(vec![self.certificate.clone()])
+                .with_ice_candidate_pool_size(configuration.ice.candidate_pool_size)
+                .build();
+            match Box::pin(
+                PeerConnectionBuilder::new()
+                    .with_configuration(rtc_configuration)
+                    .with_setting_engine(setting_engine.clone())
+                    .with_handler(handler.clone())
+                    .with_runtime(Arc::new(TokioRuntime))
+                    .with_udp_addrs(udp_addresses)
+                    .with_tcp_addrs(tcp_addresses)
+                    .with_data_channel_send_buffer_limit(configuration.sctp.send_buffer_limit)
+                    .build(),
+            )
+            .await
+            {
+                Ok(connection) => {
+                    peer = Some(Arc::new(connection) as Arc<dyn NativePeerConnection>);
+                    break;
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    if port == 0 || !message.contains("no udp_sockets or tcp_listeners available") {
+                        return Err(format!("Failed to create peer connection: {message}"));
+                    }
+                    last_error = Some(message);
+                }
+            }
+        }
+        let peer = peer.ok_or_else(|| {
+            if configuration.min_port == 0 {
+                format!(
+                    "Failed to bind peer connection transports: {}",
+                    last_error.unwrap_or_else(|| "unknown bind error".to_owned())
+                )
+            } else {
+                format!(
+                    "No transport port is available in the configured range {}-{}: {}",
+                    configuration.min_port,
+                    configuration.max_port,
+                    last_error.unwrap_or_else(|| "unknown bind error".to_owned())
+                )
+            }
+        })?;
 
         self.lock_registry()?.peers.insert(
             handle,
             PeerEntry {
-                peer: Arc::new(peer) as Arc<dyn NativePeerConnection>,
+                peer,
                 operations: Arc::new(AsyncMutex::new(())),
             },
         );
@@ -173,6 +250,42 @@ impl RuntimeState {
             .add_ice_candidate(candidate)
             .await
             .map_err(|error| format!("Failed to add ICE candidate: {error}"))
+    }
+
+    pub async fn restart_ice(&self, peer_handle: u64) -> Result<(), String> {
+        let peer = self.get_peer(peer_handle)?;
+        let _operation = peer.operations.lock().await;
+        peer.peer
+            .restart_ice()
+            .await
+            .map_err(|error| format!("Failed to restart ICE: {error}"))
+    }
+
+    pub async fn set_configuration(
+        &self,
+        peer_handle: u64,
+        mut ice_servers: Vec<RTCIceServer>,
+        relay_only: bool,
+    ) -> Result<(), String> {
+        let peer = self.get_peer(peer_handle)?;
+        let _operation = peer.operations.lock().await;
+        let policy = if relay_only {
+            RTCIceTransportPolicy::Relay
+        } else {
+            RTCIceTransportPolicy::All
+        };
+        if ice_servers.is_empty() {
+            ice_servers.push(RTCIceServer::default());
+        }
+        peer.peer
+            .set_configuration(
+                RTCConfigurationBuilder::new()
+                    .with_ice_servers(ice_servers)
+                    .with_ice_transport_policy(policy)
+                    .build(),
+            )
+            .await
+            .map_err(|error| format!("Failed to update peer configuration: {error}"))
     }
 
     pub async fn create_data_channel(
@@ -474,19 +587,61 @@ async fn poll_data_channel(
     }
 }
 
-fn choose_udp_address(min_port: u16, max_port: u16) -> Result<String, String> {
-    if min_port == 0 && max_port == 0 {
-        return Ok("0.0.0.0:0".to_owned());
-    }
-    for port in min_port..=max_port {
-        let address = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
-        if UdpSocket::bind(address).is_ok() {
-            return Ok(address.to_string());
+fn bind_addresses(network_types: &[NetworkType], port: u16) -> (Vec<String>, Vec<String>) {
+    let mut udp = Vec::new();
+    let mut tcp = Vec::new();
+    for network_type in network_types {
+        let (target, address) = match network_type {
+            NetworkType::Unspecified => continue,
+            NetworkType::Udp4 => (&mut udp, format!("0.0.0.0:{port}")),
+            NetworkType::Udp6 => (&mut udp, format!("[::]:{port}")),
+            NetworkType::Tcp4 => (&mut tcp, format!("0.0.0.0:{port}")),
+            NetworkType::Tcp6 => (&mut tcp, format!("[::]:{port}")),
+        };
+        if !target.contains(&address) {
+            target.push(address);
         }
     }
-    Err(format!(
-        "No UDP port is available in the configured range {min_port}-{max_port}"
-    ))
+    (udp, tcp)
+}
+
+fn setting_engine(configuration: &PeerConfiguration) -> SettingEngine {
+    let mut engine = SettingEngine::default();
+    engine.set_dtls_cipher_suites(vec![
+        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_128_Gcm_Sha256,
+        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_ChaCha20_Poly1305_Sha256,
+        CipherSuiteId::Tls_Ecdhe_Ecdsa_With_Aes_256_Cbc_Sha,
+    ]);
+    engine.set_ice_timeouts(
+        configuration.ice.disconnected_timeout,
+        configuration.ice.failed_timeout,
+        configuration.ice.keep_alive_interval,
+    );
+    engine.set_ice_connection_attempts(
+        configuration.ice.check_interval,
+        configuration.ice.max_binding_requests,
+    );
+    engine.set_host_acceptance_min_wait(configuration.ice.host_acceptance_min_wait);
+    engine.set_srflx_acceptance_min_wait(configuration.ice.server_reflexive_acceptance_min_wait);
+    engine.set_prflx_acceptance_min_wait(configuration.ice.peer_reflexive_acceptance_min_wait);
+    engine.set_relay_acceptance_min_wait(configuration.ice.relay_acceptance_min_wait);
+    engine.set_network_types(configuration.ice.network_types.clone());
+    engine.set_multicast_dns_mode(configuration.ice.mdns_mode);
+    if configuration.ice.mdns_query_timeout.is_some() {
+        engine.set_multicast_dns_timeout(configuration.ice.mdns_query_timeout);
+    }
+    engine.set_lite(configuration.ice.lite);
+    engine.set_discard_local_candidates_during_ice_restart(
+        configuration.ice.discard_local_candidates_on_restart,
+    );
+    if let Some((addresses, candidate_type)) = &configuration.ice.nat_mapping {
+        engine.set_nat_1to1_ips(addresses.clone(), *candidate_type);
+    }
+    engine.set_sctp_max_message_size(SctpMaxMessageSize::Bounded(
+        configuration.sctp.maximum_message_size,
+    ));
+    engine.set_sctp_max_receive_buffer_size(configuration.sctp.receive_buffer_size);
+    engine
 }
 
 fn peer_state_number(state: RTCPeerConnectionState) -> i32 {
@@ -522,10 +677,15 @@ fn ice_gathering_state_number(state: RTCIceGatheringState) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::choose_udp_address;
+    use ice::network_type::NetworkType;
 
     #[test]
-    fn selects_an_ephemeral_udp_port_by_default() {
-        assert_eq!(choose_udp_address(0, 0).unwrap(), "0.0.0.0:0");
+    fn creates_bind_addresses_for_selected_network_types() {
+        let (udp, tcp) = super::bind_addresses(
+            &[NetworkType::Udp4, NetworkType::Udp6, NetworkType::Tcp4],
+            10_000,
+        );
+        assert_eq!(udp, ["0.0.0.0:10000", "[::]:10000"]);
+        assert_eq!(tcp, ["0.0.0.0:10000"]);
     }
 }

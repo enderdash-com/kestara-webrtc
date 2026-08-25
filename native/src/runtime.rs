@@ -5,9 +5,12 @@ use std::thread::{self, JoinHandle as ThreadJoinHandle};
 use std::time::Duration;
 
 use crossbeam_channel::{Receiver, Sender, bounded, unbounded};
+use rcgen::{KeyPair, PKCS_ECDSA_P256_SHA256};
 use tokio::runtime::{Builder, Runtime};
 use tokio::task::JoinHandle;
-use webrtc::peer_connection::{RTCIceCandidateInit, RTCSessionDescription};
+use webrtc::peer_connection::{
+    RTCCertificate, RTCIceCandidateInit, RTCIceServer, RTCSessionDescription,
+};
 
 use crate::events::{self, NativeEvent, OperationValue};
 use crate::registry::{DataChannelConfiguration, PeerConfiguration, RuntimeState};
@@ -41,6 +44,18 @@ pub enum Command {
         timeout: Duration,
         peer_handle: u64,
         candidate: RTCIceCandidateInit,
+    },
+    RestartIce {
+        operation_handle: u64,
+        timeout: Duration,
+        peer_handle: u64,
+    },
+    SetConfiguration {
+        operation_handle: u64,
+        timeout: Duration,
+        peer_handle: u64,
+        ice_servers: Vec<RTCIceServer>,
+        relay_only: bool,
     },
     CreateDataChannel {
         operation_handle: u64,
@@ -94,6 +109,12 @@ impl Command {
             | Self::AddIceCandidate {
                 operation_handle, ..
             }
+            | Self::RestartIce {
+                operation_handle, ..
+            }
+            | Self::SetConfiguration {
+                operation_handle, ..
+            }
             | Self::CreateDataChannel {
                 operation_handle, ..
             }
@@ -122,6 +143,8 @@ impl Command {
             | Self::SetLocalDescription { timeout, .. }
             | Self::SetRemoteDescription { timeout, .. }
             | Self::AddIceCandidate { timeout, .. }
+            | Self::RestartIce { timeout, .. }
+            | Self::SetConfiguration { timeout, .. }
             | Self::CreateDataChannel { timeout, .. }
             | Self::SendText { timeout, .. }
             | Self::SendBinary { timeout, .. }
@@ -137,6 +160,7 @@ struct RuntimeController {
     events: Receiver<NativeEvent>,
     event_sender: Sender<NativeEvent>,
     thread: Mutex<Option<ThreadJoinHandle<()>>>,
+    certificate_fingerprint: String,
 }
 
 static RUNTIMES: LazyLock<Mutex<HashMap<u64, Arc<RuntimeController>>>> =
@@ -165,8 +189,8 @@ pub fn create(worker_threads: usize) -> Result<u64, String> {
         })
         .map_err(|error| format!("Failed to start the WebRTC runtime controller: {error}"))?;
 
-    match ready_receiver.recv() {
-        Ok(Ok(())) => {}
+    let certificate_fingerprint = match ready_receiver.recv() {
+        Ok(Ok(fingerprint)) => fingerprint,
         Ok(Err(error)) => {
             let _ = thread.join();
             return Err(error);
@@ -177,16 +201,21 @@ pub fn create(worker_threads: usize) -> Result<u64, String> {
                 "The WebRTC runtime controller stopped during startup: {error}"
             ));
         }
-    }
+    };
 
     let controller = Arc::new(RuntimeController {
         commands: command_sender,
         events: event_receiver,
         event_sender,
         thread: Mutex::new(Some(thread)),
+        certificate_fingerprint,
     });
     lock_runtimes()?.insert(runtime_handle, controller);
     Ok(runtime_handle)
+}
+
+pub fn certificate_fingerprint(runtime_handle: u64) -> Result<String, String> {
+    Ok(get_runtime(runtime_handle)?.certificate_fingerprint.clone())
 }
 
 pub fn submit(runtime_handle: u64, command: Command) -> Result<(), String> {
@@ -261,19 +290,30 @@ fn run_runtime(
     worker_threads: usize,
     commands: &Receiver<Command>,
     events: Sender<NativeEvent>,
-    ready: &Sender<Result<(), String>>,
+    ready: &Sender<Result<String, String>>,
 ) {
     let runtime = match build_runtime(runtime_handle, worker_threads) {
-        Ok(runtime) => {
-            let _ = ready.send(Ok(()));
-            runtime
-        }
+        Ok(runtime) => runtime,
         Err(error) => {
             let _ = ready.send(Err(error));
             return;
         }
     };
-    let state = Arc::new(RuntimeState::new(events));
+    let certificate = match generate_certificate() {
+        Ok(certificate) => certificate,
+        Err(error) => {
+            let _ = ready.send(Err(error));
+            return;
+        }
+    };
+    let fingerprint = certificate
+        .get_fingerprints()
+        .into_iter()
+        .next()
+        .map(|fingerprint| fingerprint.value)
+        .unwrap_or_default();
+    let state = Arc::new(RuntimeState::new(events, certificate));
+    let _ = ready.send(Ok(fingerprint));
     let mut operations = Vec::new();
 
     while let Ok(command) = commands.recv() {
@@ -323,22 +363,33 @@ fn build_runtime(runtime_handle: u64, worker_threads: usize) -> Result<Runtime, 
         .map_err(|error| format!("Failed to start the WebRTC runtime: {error}"))
 }
 
+fn generate_certificate() -> Result<RTCCertificate, String> {
+    let key_pair = KeyPair::generate_for(&PKCS_ECDSA_P256_SHA256)
+        .map_err(|error| format!("Failed to generate the runtime DTLS key: {error}"))?;
+    RTCCertificate::from_key_pair(key_pair)
+        .map_err(|error| format!("Failed to generate the runtime DTLS certificate: {error}"))
+}
+
 fn dispatch(runtime: &Runtime, state: Arc<RuntimeState>, command: Command) -> JoinHandle<()> {
     let operation_handle = command.operation_handle();
     let timeout = command.timeout();
     runtime.spawn(async move {
-        let result = tokio::time::timeout(timeout, execute(Arc::clone(&state), command))
-            .await
-            .map_err(|_| "WebRTC operation timed out".to_owned())
-            .and_then(|result| result);
+        let result = Box::pin(tokio::time::timeout(
+            timeout,
+            execute(Arc::clone(&state), command),
+        ))
+        .await
+        .map_err(|_| "WebRTC operation timed out".to_owned())
+        .and_then(|result| result);
         state.send_event(NativeEvent::operation(operation_handle, result));
     })
 }
 
+#[allow(clippy::too_many_lines)]
 async fn execute(state: Arc<RuntimeState>, command: Command) -> Result<OperationValue, String> {
     match command {
         Command::CreatePeer { configuration, .. } => {
-            let peer_handle = state.create_peer(configuration).await?;
+            let peer_handle = Box::pin(state.create_peer(configuration)).await?;
             Ok(OperationValue {
                 peer_handle,
                 ..OperationValue::default()
@@ -381,6 +432,21 @@ async fn execute(state: Arc<RuntimeState>, command: Command) -> Result<Operation
             ..
         } => {
             state.add_ice_candidate(peer_handle, candidate).await?;
+            Ok(OperationValue::default())
+        }
+        Command::RestartIce { peer_handle, .. } => {
+            state.restart_ice(peer_handle).await?;
+            Ok(OperationValue::default())
+        }
+        Command::SetConfiguration {
+            peer_handle,
+            ice_servers,
+            relay_only,
+            ..
+        } => {
+            state
+                .set_configuration(peer_handle, ice_servers, relay_only)
+                .await?;
             Ok(OperationValue::default())
         }
         Command::CreateDataChannel {

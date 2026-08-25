@@ -25,6 +25,7 @@ public final class WebRtcRuntime implements AutoCloseable {
 
     private final long handle;
     private final WebRtcRuntimeOptions options;
+    private final String certificateFingerprint;
     private final AtomicLong nextOperation = new AtomicLong(1);
     private final ConcurrentMap<Long, PendingOperation<?>> operations = new ConcurrentHashMap<>();
     private final ConcurrentMap<Long, PeerConnection> peers = new ConcurrentHashMap<>();
@@ -38,6 +39,9 @@ public final class WebRtcRuntime implements AutoCloseable {
     private WebRtcRuntime(long handle, WebRtcRuntimeOptions options) {
         this.handle = handle;
         this.options = options;
+        certificateFingerprint = Objects.requireNonNull(
+                NativeBindings.nativeRuntimeCertificateFingerprint(handle),
+                "Native DTLS certificate fingerprint");
         eventThread = new Thread(this::dispatchEvents, "kestara-webrtc-events-" + handle);
         eventThread.setDaemon(true);
         eventThread.setContextClassLoader(null);
@@ -63,7 +67,16 @@ public final class WebRtcRuntime implements AutoCloseable {
         Objects.requireNonNull(options, "options");
         KestaraWebRtc.ensureNativeAbi();
         long handle = NativeBindings.nativeCreateRuntime(options.workerThreads());
-        return new WebRtcRuntime(handle, options);
+        try {
+            return new WebRtcRuntime(handle, options);
+        } catch (RuntimeException | Error error) {
+            try {
+                NativeBindings.nativeReleaseRuntime(handle);
+            } catch (RuntimeException | Error releaseError) {
+                error.addSuppressed(releaseError);
+            }
+            throw error;
+        }
     }
 
     /**
@@ -73,6 +86,15 @@ public final class WebRtcRuntime implements AutoCloseable {
      */
     public WebRtcRuntimeOptions options() {
         return options;
+    }
+
+    /**
+     * Returns the SHA-256 fingerprint of the DTLS certificate owned by this runtime.
+     *
+     * @return the lowercase, colon-separated fingerprint
+     */
+    public String certificateFingerprint() {
+        return certificateFingerprint;
     }
 
     /**
@@ -103,6 +125,9 @@ public final class WebRtcRuntime implements AutoCloseable {
             PeerConnectionConfiguration configuration) {
         Objects.requireNonNull(configuration, "configuration");
         NativeConfiguration nativeConfiguration = NativeConfiguration.from(configuration);
+        IceOptions ice = configuration.iceOptions();
+        SctpOptions sctp = configuration.sctpOptions();
+        IceNatMapping natMapping = ice.natMapping().orElse(null);
         return submit(
                 event -> {
                     PeerConnection peer = new PeerConnection(this, event.peerHandle(), configuration);
@@ -118,7 +143,28 @@ public final class WebRtcRuntime implements AutoCloseable {
                         configuration.minPort(),
                         configuration.maxPort(),
                         configuration.iceTransportPolicy().ordinal(),
-                        configuration.dataChannelSendBufferLimit(),
+                        optionalMillis(ice.disconnectedTimeout()),
+                        optionalMillis(ice.failedTimeout()),
+                        optionalMillis(ice.keepAliveInterval()),
+                        optionalMillis(ice.checkInterval()),
+                        ice.maxBindingRequests().orElse(-1),
+                        optionalMillis(ice.hostAcceptanceMinWait()),
+                        optionalMillis(ice.serverReflexiveAcceptanceMinWait()),
+                        optionalMillis(ice.peerReflexiveAcceptanceMinWait()),
+                        optionalMillis(ice.relayAcceptanceMinWait()),
+                        networkTypeMask(ice),
+                        ice.mdnsMode().ordinal(),
+                        optionalMillis(ice.mdnsQueryTimeout()),
+                        ice.lite(),
+                        natMapping == null
+                                ? new String[0]
+                                : natMapping.externalAddresses().toArray(String[]::new),
+                        natMapping == null ? -1 : natMapping.type().ordinal(),
+                        ice.discardLocalCandidatesOnRestart(),
+                        ice.candidatePoolSize(),
+                        sctp.sendBufferLimit(),
+                        sctp.receiveBufferSize(),
+                        sctp.maximumMessageSize(),
                         configuration.operationTimeoutMillis()));
     }
 
@@ -213,6 +259,29 @@ public final class WebRtcRuntime implements AutoCloseable {
                         candidate.candidate(),
                         candidate.sdpMid(),
                         candidate.sdpMLineIndex() == null ? -1 : candidate.sdpMLineIndex(),
+                        timeoutMillis));
+    }
+
+    CompletionStage<Void> restartIceAsync(long peer, long timeoutMillis) {
+        return submit(
+                ignored -> null,
+                operation -> NativeBindings.nativeSubmitRestartIce(
+                        handle, operation, peer, timeoutMillis));
+    }
+
+    CompletionStage<Void> setConfigurationAsync(
+            long peer, PeerConnectionConfiguration configuration, long timeoutMillis) {
+        NativeConfiguration nativeConfiguration = NativeConfiguration.from(configuration);
+        return submit(
+                ignored -> null,
+                operation -> NativeBindings.nativeSubmitSetConfiguration(
+                        handle,
+                        operation,
+                        peer,
+                        nativeConfiguration.urls,
+                        nativeConfiguration.usernames,
+                        nativeConfiguration.credentials,
+                        configuration.iceTransportPolicy().ordinal(),
                         timeoutMillis));
     }
 
@@ -414,6 +483,18 @@ public final class WebRtcRuntime implements AutoCloseable {
 
     private static int optionalUnsigned16(Integer value) {
         return value == null ? -1 : value;
+    }
+
+    private static long optionalMillis(java.util.Optional<java.time.Duration> value) {
+        return value.map(java.time.Duration::toMillis).orElse(-1L);
+    }
+
+    private static int networkTypeMask(IceOptions options) {
+        int mask = 0;
+        for (IceNetworkType type : options.networkTypes()) {
+            mask |= 1 << type.ordinal();
+        }
+        return mask;
     }
 
     private record PendingOperation<T>(

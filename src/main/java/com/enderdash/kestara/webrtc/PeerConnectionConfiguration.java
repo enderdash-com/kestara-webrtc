@@ -10,14 +10,22 @@ import java.util.concurrent.ForkJoinPool;
 public final class PeerConnectionConfiguration {
     /** Default peer connection configuration. */
     public static final PeerConnectionConfiguration DEFAULT = new PeerConnectionConfiguration(
-            List.of(), 0, 0, IceTransportPolicy.ALL, ForkJoinPool.commonPool(), 16 * 1024 * 1024, 10_000);
+            List.of(),
+            0,
+            0,
+            IceTransportPolicy.ALL,
+            IceOptions.DEFAULT,
+            SctpOptions.DEFAULT,
+            ForkJoinPool.commonPool(),
+            10_000);
 
     private final List<IceServer> iceServers;
     private final int minPort;
     private final int maxPort;
     private final IceTransportPolicy iceTransportPolicy;
+    private final IceOptions iceOptions;
+    private final SctpOptions sctpOptions;
     private final Executor callbackExecutor;
-    private final int dataChannelSendBufferLimit;
     private final long operationTimeoutMillis;
 
     private PeerConnectionConfiguration(
@@ -25,15 +33,17 @@ public final class PeerConnectionConfiguration {
             int minPort,
             int maxPort,
             IceTransportPolicy iceTransportPolicy,
+            IceOptions iceOptions,
+            SctpOptions sctpOptions,
             Executor callbackExecutor,
-            int dataChannelSendBufferLimit,
             long operationTimeoutMillis) {
         this.iceServers = List.copyOf(iceServers);
         this.minPort = minPort;
         this.maxPort = maxPort;
         this.iceTransportPolicy = iceTransportPolicy;
+        this.iceOptions = iceOptions;
+        this.sctpOptions = sctpOptions;
         this.callbackExecutor = callbackExecutor;
-        this.dataChannelSendBufferLimit = dataChannelSendBufferLimit;
         this.operationTimeoutMillis = operationTimeoutMillis;
     }
 
@@ -47,7 +57,7 @@ public final class PeerConnectionConfiguration {
     }
 
     /**
-     * Returns the first allowed UDP port.
+     * Returns the first allowed transport port.
      *
      * @return the port, or {@code 0} when no range is set
      */
@@ -56,7 +66,7 @@ public final class PeerConnectionConfiguration {
     }
 
     /**
-     * Returns the last allowed UDP port.
+     * Returns the last allowed transport port.
      *
      * @return the port, or {@code 0} when no range is set
      */
@@ -74,21 +84,30 @@ public final class PeerConnectionConfiguration {
     }
 
     /**
-     * Returns the application callback executor.
+     * Returns the advanced ICE options.
      *
-     * @return the executor
+     * @return the ICE options
      */
-    public Executor callbackExecutor() {
-        return callbackExecutor;
+    public IceOptions iceOptions() {
+        return iceOptions;
     }
 
     /**
-     * Returns the native send-buffer limit for each DataChannel.
+     * Returns the SCTP transport options.
      *
-     * @return the limit in bytes
+     * @return the SCTP options
      */
-    public int dataChannelSendBufferLimit() {
-        return dataChannelSendBufferLimit;
+    public SctpOptions sctpOptions() {
+        return sctpOptions;
+    }
+
+    /**
+     * Returns the application callback executor.
+     *
+     * @return the callback executor
+     */
+    public Executor callbackExecutor() {
+        return callbackExecutor;
     }
 
     /**
@@ -108,11 +127,11 @@ public final class PeerConnectionConfiguration {
      */
     public PeerConnectionConfiguration withIceServers(List<IceServer> value) {
         return copy(List.copyOf(Objects.requireNonNull(value, "value")), minPort, maxPort,
-                iceTransportPolicy, callbackExecutor, dataChannelSendBufferLimit, operationTimeoutMillis);
+                iceTransportPolicy, iceOptions, sctpOptions, callbackExecutor, operationTimeoutMillis);
     }
 
     /**
-     * Returns a copy that restricts UDP sockets to an inclusive port range.
+     * Returns a copy that restricts transport sockets to an inclusive port range.
      *
      * @param minimum the first port
      * @param maximum the last port
@@ -122,18 +141,18 @@ public final class PeerConnectionConfiguration {
         if (minimum < 1 || maximum > 65_535 || minimum > maximum) {
             throw new IllegalArgumentException("Port range must be between 1 and 65535");
         }
-        return copy(iceServers, minimum, maximum, iceTransportPolicy, callbackExecutor,
-                dataChannelSendBufferLimit, operationTimeoutMillis);
+        return copy(iceServers, minimum, maximum, iceTransportPolicy, iceOptions, sctpOptions,
+                callbackExecutor, operationTimeoutMillis);
     }
 
     /**
-     * Returns a copy without a UDP port restriction.
+     * Returns a copy without a transport port restriction.
      *
      * @return the updated configuration
      */
     public PeerConnectionConfiguration withoutPortRange() {
-        return copy(iceServers, 0, 0, iceTransportPolicy, callbackExecutor,
-                dataChannelSendBufferLimit, operationTimeoutMillis);
+        return copy(iceServers, 0, 0, iceTransportPolicy, iceOptions, sctpOptions,
+                callbackExecutor, operationTimeoutMillis);
     }
 
     /**
@@ -144,7 +163,29 @@ public final class PeerConnectionConfiguration {
      */
     public PeerConnectionConfiguration withIceTransportPolicy(IceTransportPolicy value) {
         return copy(iceServers, minPort, maxPort, Objects.requireNonNull(value, "value"),
-                callbackExecutor, dataChannelSendBufferLimit, operationTimeoutMillis);
+                iceOptions, sctpOptions, callbackExecutor, operationTimeoutMillis);
+    }
+
+    /**
+     * Returns a copy with the specified advanced ICE options.
+     *
+     * @param value the ICE options
+     * @return the updated configuration
+     */
+    public PeerConnectionConfiguration withIceOptions(IceOptions value) {
+        return copy(iceServers, minPort, maxPort, iceTransportPolicy,
+                Objects.requireNonNull(value, "value"), sctpOptions, callbackExecutor, operationTimeoutMillis);
+    }
+
+    /**
+     * Returns a copy with the specified SCTP transport options.
+     *
+     * @param value the SCTP options
+     * @return the updated configuration
+     */
+    public PeerConnectionConfiguration withSctpOptions(SctpOptions value) {
+        return copy(iceServers, minPort, maxPort, iceTransportPolicy, iceOptions,
+                Objects.requireNonNull(value, "value"), callbackExecutor, operationTimeoutMillis);
     }
 
     /**
@@ -155,21 +196,7 @@ public final class PeerConnectionConfiguration {
      */
     public PeerConnectionConfiguration withCallbackExecutor(Executor value) {
         return copy(iceServers, minPort, maxPort, iceTransportPolicy,
-                Objects.requireNonNull(value, "value"), dataChannelSendBufferLimit,
-                operationTimeoutMillis);
-    }
-
-    /**
-     * Returns a copy with a native send-buffer limit for each DataChannel.
-     *
-     * @param bytes the limit in bytes
-     * @return the updated configuration
-     */
-    public PeerConnectionConfiguration withDataChannelSendBufferLimit(int bytes) {
-        if (bytes < 0) {
-            throw new IllegalArgumentException("Data channel send buffer limit must not be negative");
-        }
-        return copy(iceServers, minPort, maxPort, iceTransportPolicy, callbackExecutor, bytes,
+                iceOptions, sctpOptions, Objects.requireNonNull(value, "value"),
                 operationTimeoutMillis);
     }
 
@@ -185,8 +212,8 @@ public final class PeerConnectionConfiguration {
         if (millis < 1) {
             throw new IllegalArgumentException("Operation timeout must be at least one millisecond");
         }
-        return copy(iceServers, minPort, maxPort, iceTransportPolicy, callbackExecutor,
-                dataChannelSendBufferLimit, millis);
+        return copy(iceServers, minPort, maxPort, iceTransportPolicy,
+                iceOptions, sctpOptions, callbackExecutor, millis);
     }
 
     private static PeerConnectionConfiguration copy(
@@ -194,10 +221,11 @@ public final class PeerConnectionConfiguration {
             int minPort,
             int maxPort,
             IceTransportPolicy iceTransportPolicy,
+            IceOptions iceOptions,
+            SctpOptions sctpOptions,
             Executor callbackExecutor,
-            int dataChannelSendBufferLimit,
             long operationTimeoutMillis) {
         return new PeerConnectionConfiguration(iceServers, minPort, maxPort, iceTransportPolicy,
-                callbackExecutor, dataChannelSendBufferLimit, operationTimeoutMillis);
+                iceOptions, sctpOptions, callbackExecutor, operationTimeoutMillis);
     }
 }

@@ -13,12 +13,17 @@ Kestara WebRTC is a WebRTC DataChannel library for Java. It provides a small Jav
 - Trickle ICE candidates
 - STUN and authenticated TURN servers
 - Direct or relay-only ICE policies
-- Optional UDP port ranges
+- ICE timeouts, retry limits, network filters, mDNS, ICE Lite, and one-to-one NAT mappings
+- Race-free UDP and TCP port ranges
+- ICE restart and live ICE server updates
+- Candidate gathering before negotiation
 - Ordered, unordered, reliable, and partially reliable DataChannels
+- SCTP send buffers, receive windows, and maximum message sizes
 - Text and binary messages
 - Isolated runtimes with configurable Rust worker counts
 - Non-blocking operations through `CompletionStage`
 - Deterministic, bounded native shutdown
+- One runtime-owned DTLS certificate with a stable fingerprint
 - Ordered Java callbacks on a configurable executor
 
 Media capture, codecs, rendering, and signaling services are outside the current scope.
@@ -131,6 +136,68 @@ The synchronous methods call the same asynchronous commands and wait up to the p
 Rust protocol tasks run on runtime-owned Tokio workers. One daemon Java thread per runtime receives native events. Kestara sends each peer's callbacks to its configured Java executor in event order. Application callbacks do not run on Rust protocol threads.
 
 Blocking Java operations use the configured operation timeout. Runtime shutdown uses `WebRtcRuntimeOptions.shutdownTimeout()`.
+
+## ICE and SCTP configuration
+
+Use `IceOptions` for transport behavior that does not belong to the standard ICE server list.
+
+```java
+var ice = IceOptions.DEFAULT
+        .withTimeouts(
+                Duration.ofSeconds(8),
+                Duration.ofSeconds(30),
+                Duration.ofSeconds(3))
+        .withConnectionAttempts(Duration.ofMillis(150), 9)
+        .withNetworkTypes(Set.of(IceNetworkType.UDP4, IceNetworkType.TCP4))
+        .withMdns(IceMdnsMode.QUERY_ONLY, Duration.ofSeconds(10))
+        .withNatMapping(new IceNatMapping(
+                List.of("203.0.113.10"),
+                IceNatMappingType.HOST))
+        .withCandidatePoolSize(1);
+
+var sctp = SctpOptions.DEFAULT
+        .withSendBufferLimit(8 * 1024 * 1024)
+        .withReceiveBufferSize(512 * 1024)
+        .withMaximumMessageSize(128 * 1024);
+
+var configuration = PeerConnectionConfiguration.DEFAULT
+        .withIceOptions(ice)
+        .withSctpOptions(sctp)
+        .withPortRange(40_000, 40_100);
+```
+
+Kestara binds the real WebRTC transports when it selects a port. If a port is busy, it tries the next port in the range.
+
+The receive window must not be less than the maximum message size. The maximum supported message size is 256 KiB.
+
+An ICE candidate pool starts gathering when Kestara creates the peer. Kestara holds candidate callbacks until the local description is set.
+
+## Recover an ICE connection
+
+Update the ICE servers or transport policy before an ICE restart:
+
+```java
+var updated = configuration
+        .withIceServers(refreshedIceServers)
+        .withIceTransportPolicy(IceTransportPolicy.ALL);
+
+peer.setConfigurationAsync(updated)
+        .thenCompose(ignored -> peer.restartIceAsync())
+        .thenCompose(ignored -> peer.setLocalDescriptionAsync(SessionDescriptionType.OFFER))
+        .thenAccept(this::sendOfferToRemotePeer);
+```
+
+`setConfigurationAsync` changes only the ICE servers and transport policy of an existing peer. New transport and SCTP options require a new peer.
+
+## DTLS certificate ownership
+
+Each runtime creates one ECDSA P-256 certificate. All peers in that runtime use the same certificate.
+
+```java
+String sha256Fingerprint = runtime.certificateFingerprint();
+```
+
+Create a new runtime to rotate the certificate. Closing the runtime removes the certificate and its private key from native memory.
 
 ## Build
 

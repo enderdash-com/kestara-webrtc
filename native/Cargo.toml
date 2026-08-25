@@ -16,8 +16,11 @@ async-trait = "0.1.89"
 bytes = "1.12.0"
 crossbeam-channel = "0.5.15"
 jni = "0.22.4"
+rcgen = "0.14.9"
+rtc = "0.20.3"
+ice = { package = "rtc-ice", version = "0.20.3" }
 tokio = { version = "1.52.0", features = ["rt-multi-thread", "time"] }
-webrtc = "0.20.0"
+webrtc = { git = "https://github.com/enderdash-com/webrtc.git", rev = "3bd161691787fd8122073f77588e011d2b1ff3cc" }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

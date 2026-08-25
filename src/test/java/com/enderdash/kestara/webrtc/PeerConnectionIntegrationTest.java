@@ -4,11 +4,17 @@ import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.ByteBuffer;
+import java.net.DatagramSocket;
+import java.net.InetSocketAddress;
+import java.net.SocketException;
 import java.time.Duration;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -73,6 +79,93 @@ class PeerConnectionIntegrationTest {
             assertFalse(second.diagnostics().closed());
             assertEquals(1, second.diagnostics().peerConnections());
             secondPeer.closeAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
+        }
+    }
+
+    @Test
+    void ownsOneDtlsCertificateForEachRuntime() {
+        String firstFingerprint;
+        try (WebRtcRuntime runtime = WebRtcRuntime.create();
+                PeerConnection first = runtime.createPeerConnection(PeerConnectionConfiguration.DEFAULT);
+                PeerConnection second = runtime.createPeerConnection(PeerConnectionConfiguration.DEFAULT)) {
+            firstFingerprint = runtime.certificateFingerprint();
+            assertTrue(firstFingerprint.matches("(?:[0-9a-f]{2}:){31}[0-9a-f]{2}"));
+            assertTrue(first.createOffer()
+                    .sdp()
+                    .toLowerCase(java.util.Locale.ROOT)
+                    .contains("a=fingerprint:sha-256 " + firstFingerprint));
+            assertTrue(second.createOffer()
+                    .sdp()
+                    .toLowerCase(java.util.Locale.ROOT)
+                    .contains("a=fingerprint:sha-256 " + firstFingerprint));
+        }
+
+        try (WebRtcRuntime runtime = WebRtcRuntime.create()) {
+            assertNotEquals(firstFingerprint, runtime.certificateFingerprint());
+        }
+    }
+
+    @Test
+    void retriesActualTransportBindingsAcrossThePortRange() throws Exception {
+        try (DatagramSocket reservation = reserveUdpPort()) {
+            int reservedPort = reservation.getLocalPort();
+
+            try (WebRtcRuntime runtime = WebRtcRuntime.create()) {
+                PeerConnectionConfiguration unavailable = PeerConnectionConfiguration.DEFAULT
+                        .withIceOptions(IceOptions.DEFAULT.withMdns(
+                                IceMdnsMode.DISABLED, Duration.ofSeconds(1)))
+                        .withPortRange(reservedPort, reservedPort);
+                assertThrows(WebRtcException.class, () -> runtime.createPeerConnection(unavailable));
+
+                int maximum = reservedPort + 20;
+                PeerConnectionConfiguration retrying = unavailable.withPortRange(reservedPort, maximum);
+                try (PeerConnection peer = runtime.createPeerConnection(retrying)) {
+                    assertNotNull(peer);
+                }
+            }
+        }
+    }
+
+    private static DatagramSocket reserveUdpPort() throws SocketException {
+        for (int port = 40_000; port <= 45_000; port++) {
+            DatagramSocket socket = new DatagramSocket(null);
+            socket.setReuseAddress(false);
+            try {
+                socket.bind(new InetSocketAddress("0.0.0.0", port));
+                return socket;
+            } catch (SocketException error) {
+                socket.close();
+            }
+        }
+        throw new SocketException("No UDP test port is available");
+    }
+
+    @Test
+    void appliesAdvancedOptionsAndSupportsIceRecoveryOperations() throws Exception {
+        IceOptions ice = IceOptions.DEFAULT
+                .withTimeouts(Duration.ofSeconds(6), Duration.ofSeconds(20), Duration.ofSeconds(2))
+                .withConnectionAttempts(Duration.ofMillis(100), 8)
+                .withAcceptanceWaits(Duration.ZERO, Duration.ZERO, Duration.ZERO, Duration.ZERO)
+                .withNetworkTypes(Set.of(IceNetworkType.UDP4))
+                .withMdns(IceMdnsMode.DISABLED, Duration.ofSeconds(1))
+                .withCandidatePoolSize(1);
+        SctpOptions sctp = new SctpOptions(8 * 1024 * 1024, 512 * 1024, 128 * 1024);
+        PeerConnectionConfiguration configuration = PeerConnectionConfiguration.DEFAULT
+                .withIceOptions(ice)
+                .withSctpOptions(sctp);
+
+        try (WebRtcRuntime runtime = WebRtcRuntime.create();
+                PeerConnection peer = runtime.createPeerConnection(configuration)) {
+            CountDownLatch candidate = new CountDownLatch(1);
+            peer.onLocalCandidate(ignored -> candidate.countDown());
+            peer.createDataChannel("candidate-pool");
+            peer.setLocalDescription(SessionDescriptionType.OFFER);
+
+            assertTrue(candidate.await(5, TimeUnit.SECONDS), "The candidate pool produced no candidate");
+            peer.setConfigurationAsync(configuration.withIceTransportPolicy(IceTransportPolicy.ALL))
+                    .toCompletableFuture()
+                    .get(5, TimeUnit.SECONDS);
+            peer.restartIceAsync().toCompletableFuture().get(5, TimeUnit.SECONDS);
         }
     }
 
