@@ -27,7 +27,7 @@ java {
 
 dependencies {
   testImplementation("org.junit.jupiter:junit-jupiter:6.1.2")
-  testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.2")
+  testRuntimeOnly("org.junit.platform:junit-platform-launcher:6.1.3")
 }
 
 val nativeOs = when {
