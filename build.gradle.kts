@@ -48,14 +48,17 @@ fun KotlinNativeTarget.configureKestaraInterop(
     outputs.file(staticLibrary)
   }
 
+  binaries.all {
+    linkerOpts(*linkerOptions.toTypedArray())
+  }
+
   compilations.getByName("main").cinterops.create("kestara") {
     definitionFile.set(layout.projectDirectory.file("src/nativeInterop/cinterop/kestara.def"))
     includeDirs(nativeHeaderDirectory)
-    extraOpts(*buildList {
-      addAll(listOf("-libraryPath", targetDirectory.asFile.absolutePath))
-      addAll(listOf("-staticLibrary", staticLibraryName))
-      linkerOptions.forEach { option -> addAll(listOf("-linker-option", option)) }
-    }.toTypedArray())
+    extraOpts(
+      "-libraryPath", targetDirectory.asFile.absolutePath,
+      "-staticLibrary", staticLibraryName,
+    )
     tasks.named(interopProcessingTaskName).configure {
       dependsOn(buildTask)
     }
