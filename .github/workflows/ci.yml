@@ -48,7 +48,7 @@ jobs:
 
   compile-linux-arm64:
     name: Compile (linuxArm64)
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Check out repository
@@ -65,8 +65,15 @@ jobs:
         with:
           targets: aarch64-unknown-linux-gnu
 
+      - name: Install Linux ARM64 cross compiler
+        run: sudo apt-get update && sudo apt-get install --yes gcc-aarch64-linux-gnu
+
       - name: Configure Gradle
         uses: gradle/actions/setup-gradle@v6
 
       - name: Compile Linux ARM64
-        run: ./gradlew compileKotlinLinuxArm64
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
+        run: ./gradlew compileKotlinLinuxArm64 -PkestaraEnabledNativeTarget=LinuxArm64

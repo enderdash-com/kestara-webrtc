@@ -129,13 +129,18 @@ val jvmNativeArch = when (hostArch) {
 }
 val runnableNativeTarget = when (jvmNativeOs to jvmNativeArch) {
   "linux" to "x86_64" -> "LinuxX64"
-  "linux" to "aarch64" -> "LinuxArm64"
   "macos" to "aarch64" -> "MacosArm64"
   "windows" to "x86_64" -> "MingwX64"
   else -> null
 }
 val nativeTargetTokens = listOf("LinuxX64", "LinuxArm64", "MacosArm64", "MingwX64")
-val unavailableNativeTargets = nativeTargetTokens - setOfNotNull(runnableNativeTarget)
+val explicitlyEnabledNativeTarget = providers.gradleProperty("kestaraEnabledNativeTarget").orNull
+require(explicitlyEnabledNativeTarget == null || explicitlyEnabledNativeTarget in nativeTargetTokens) {
+  "Unsupported kestaraEnabledNativeTarget: $explicitlyEnabledNativeTarget"
+}
+val enabledNativeTargets = setOfNotNull(runnableNativeTarget, explicitlyEnabledNativeTarget)
+val unavailableNativeTargets = nativeTargetTokens - enabledNativeTargets
+val unrunnableNativeTargets = nativeTargetTokens - setOfNotNull(runnableNativeTarget)
 
 tasks.configureEach {
   unavailableNativeTargets.forEach { token ->
@@ -144,10 +149,17 @@ tasks.configureEach {
       name == "buildRust$token" ||
       name == "cinteropKestara$token" ||
       name == "compileKotlin$token" ||
+      name == "${targetName}MainKlibrary" ||
+      name == "${targetName}ProcessResources"
+    ) {
+      enabled = false
+    }
+  }
+  unrunnableNativeTargets.forEach { token ->
+    val targetName = token.replaceFirstChar(Char::lowercaseChar)
+    if (
       name == "compileTestKotlin$token" ||
       name == "linkDebugTest$token" ||
-      name == "${targetName}MainKlibrary" ||
-      name == "${targetName}ProcessResources" ||
       name == "${targetName}Test"
     ) {
       enabled = false

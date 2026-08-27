@@ -7,11 +7,27 @@ on:
         description: Release version, for example 0.3.0
         required: true
         type: string
+      native_publication:
+        description: Publish the complete release or retry one native publication
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - linuxX64
+          - linuxArm64
+          - macosArm64
+          - mingwX64
   workflow_call:
     inputs:
       version:
         description: Release version
         required: true
+        type: string
+      native_publication:
+        description: Publish the complete release or retry one native publication
+        required: false
+        default: all
         type: string
     secrets:
       MAVEN_CENTRAL_USERNAME:
@@ -31,6 +47,7 @@ permissions:
 jobs:
   build-native:
     name: Build native library (${{ matrix.platform }} ${{ matrix.arch }})
+    if: inputs.native_publication == 'all'
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -130,6 +147,7 @@ jobs:
   publish-jvm-root:
     name: Publish JVM and multiplatform metadata
     needs: build-native
+    if: inputs.native_publication == 'all'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
 
@@ -176,6 +194,7 @@ jobs:
   publish-native:
     name: Publish ${{ matrix.publication }}
     needs: publish-jvm-root
+    if: ${{ always() && (inputs.native_publication != 'all' || needs.publish-jvm-root.result == 'success') }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
     strategy:
@@ -185,51 +204,68 @@ jobs:
           - publication: linuxX64
             runner: ubuntu-24.04
             rust_target: x86_64-unknown-linux-gnu
+            target_token: LinuxX64
             task: publishLinuxX64PublicationToMavenCentralRepository
           - publication: linuxArm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-24.04
             rust_target: aarch64-unknown-linux-gnu
+            target_token: LinuxArm64
             task: publishLinuxArm64PublicationToMavenCentralRepository
           - publication: macosArm64
             runner: macos-15
             rust_target: aarch64-apple-darwin
+            target_token: MacosArm64
             task: publishMacosArm64PublicationToMavenCentralRepository
           - publication: mingwX64
             runner: windows-2025
             rust_target: x86_64-pc-windows-gnu
+            target_token: MingwX64
             task: publishMingwX64PublicationToMavenCentralRepository
 
     steps:
       - name: Check out repository
+        if: inputs.native_publication == 'all' || inputs.native_publication == matrix.publication
         uses: actions/checkout@v7
         with:
           persist-credentials: false
           ref: ${{ github.ref }}
 
       - name: Install Java
+        if: inputs.native_publication == 'all' || inputs.native_publication == matrix.publication
         uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: "17"
 
       - name: Install Rust
+        if: inputs.native_publication == 'all' || inputs.native_publication == matrix.publication
         uses: dtolnay/rust-toolchain@1.94.1
         with:
           targets: ${{ matrix.rust_target }}
 
+      - name: Install Linux ARM64 cross compiler
+        if: matrix.publication == 'linuxArm64' && (inputs.native_publication == 'all' || inputs.native_publication == matrix.publication)
+        run: sudo apt-get update && sudo apt-get install --yes gcc-aarch64-linux-gnu
+
       - name: Configure Gradle
+        if: inputs.native_publication == 'all' || inputs.native_publication == matrix.publication
         uses: gradle/actions/setup-gradle@v6
         with:
           cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
 
       - name: Publish to Maven Central
+        if: inputs.native_publication == 'all' || inputs.native_publication == matrix.publication
         env:
           VERSION: ${{ inputs.version }}
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
           ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
           ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_CENTRAL_SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_CENTRAL_SIGNING_PASSWORD }}
         run: >-
           ./gradlew ${{ matrix.task }}
+          -PkestaraEnabledNativeTarget=${{ matrix.target_token }}
           --no-configuration-cache
           --stacktrace
