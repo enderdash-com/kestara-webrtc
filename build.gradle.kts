@@ -25,7 +25,10 @@ repositories {
 
 val nativeHeaderDirectory = layout.projectDirectory.dir("native/include")
 
-fun KotlinNativeTarget.configureKestaraInterop(rustTarget: String) {
+fun KotlinNativeTarget.configureKestaraInterop(
+  rustTarget: String,
+  linkerOptions: List<String> = emptyList(),
+) {
   val targetDirectory = layout.projectDirectory.dir("native/target/$rustTarget/release")
   val staticLibraryName = "libkestara_webrtc_native.a"
   val staticLibrary = targetDirectory.file(staticLibraryName)
@@ -48,10 +51,11 @@ fun KotlinNativeTarget.configureKestaraInterop(rustTarget: String) {
   compilations.getByName("main").cinterops.create("kestara") {
     definitionFile.set(layout.projectDirectory.file("src/nativeInterop/cinterop/kestara.def"))
     includeDirs(nativeHeaderDirectory)
-    extraOpts(
-      "-libraryPath", targetDirectory.asFile.absolutePath,
-      "-staticLibrary", staticLibraryName,
-    )
+    extraOpts(*buildList {
+      addAll(listOf("-libraryPath", targetDirectory.asFile.absolutePath))
+      addAll(listOf("-staticLibrary", staticLibraryName))
+      linkerOptions.forEach { option -> addAll(listOf("-linker-option", option)) }
+    }.toTypedArray())
     tasks.named(interopProcessingTaskName).configure {
       dependsOn(buildTask)
     }
@@ -81,7 +85,10 @@ kotlin {
     configureKestaraInterop("aarch64-apple-darwin")
   }
   mingwX64 {
-    configureKestaraInterop("x86_64-pc-windows-gnu")
+    configureKestaraInterop(
+      rustTarget = "x86_64-pc-windows-gnu",
+      linkerOptions = listOf("-luserenv", "-lntdll", "-liphlpapi"),
+    )
   }
 
   sourceSets {
