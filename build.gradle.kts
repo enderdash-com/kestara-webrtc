@@ -3,6 +3,9 @@ import com.vanniktech.maven.publish.SourcesJar
 import org.gradle.api.tasks.Exec
 import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
+import org.gradle.api.tasks.testing.AbstractTestTask
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
+import org.gradle.api.tasks.testing.logging.TestLogEvent
 import org.gradle.language.jvm.tasks.ProcessResources
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
@@ -233,6 +236,16 @@ val cargoTest = tasks.register<Exec>("cargoTest") {
 
 tasks.named("check") {
   dependsOn(cargoFmt, cargoClippy, cargoTest)
+}
+
+tasks.withType<AbstractTestTask>().configureEach {
+  testLogging {
+    events(TestLogEvent.FAILED)
+    exceptionFormat = TestExceptionFormat.FULL
+    showCauses = true
+    showExceptions = true
+    showStackTraces = true
+  }
 }
 
 tasks.withType<AbstractArchiveTask>().configureEach {
