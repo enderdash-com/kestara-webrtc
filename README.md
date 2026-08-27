@@ -2,284 +2,231 @@
 
 [![Maven Central](https://img.shields.io/maven-central/v/com.enderdash/kestara-webrtc.svg?label=Maven%20Central)](https://central.sonatype.com/artifact/com.enderdash/kestara-webrtc)
 
-Kestara WebRTC is a WebRTC DataChannel library for Java. It provides a small Java API over the Rust `webrtc` implementation.
+Kestara WebRTC is a Kotlin Multiplatform library for WebRTC DataChannels. It provides one coroutine-based Kotlin API on JVM and Kotlin/Native. A Rust engine owns the WebRTC protocols and network resources.
 
 > [!IMPORTANT]
-> Kestara WebRTC is in early development. Test it with your own network and TURN setup before you use it in production.
+> Kestara WebRTC is in early development. Test it with your network and TURN configuration before production use.
+
+The current API is a clean KMP design. It is not compatible with the previous Java API.
+
+## Supported targets
+
+| Kotlin target | Operating system | Architecture | Native boundary |
+| --- | --- | --- | --- |
+| `jvm` | Linux, macOS, Windows | `x86_64`, `aarch64` | JNI |
+| `linuxX64` | Linux | `x86_64` | C ABI |
+| `linuxArm64` | Linux | `aarch64` | C ABI |
+| `macosArm64` | macOS | Apple silicon | C ABI |
+| `mingwX64` | Windows | `x86_64` | C ABI |
+
+The JVM release contains native libraries for all listed JVM platforms. Kotlin/Native artifacts link the Rust engine into the application binary.
 
 ## Features
 
+- Suspending peer and DataChannel operations
+- `Flow` event streams and `StateFlow` connection state
 - SDP offer and answer negotiation
-- Trickle ICE candidates
-- STUN and authenticated TURN servers
-- Direct or relay-only ICE policies
-- ICE timeouts, retry limits, network filters, mDNS, ICE Lite, and one-to-one NAT mappings
-- Race-free UDP and TCP port ranges
-- ICE restart and live ICE server updates
-- Candidate gathering before negotiation
+- Trickle ICE with STUN, authenticated TURN, relay-only mode, and ICE restart
+- UDP and TCP port ranges, network filters, ICE Lite, mDNS, and one-to-one NAT mappings
 - Ordered, unordered, reliable, and partially reliable DataChannels
-- Bounded inbound delivery with a backpressured `Flow.Publisher`
-- SCTP send buffers, receive windows, queue limits, and maximum message sizes
-- Text messages and direct-buffer binary messages
-- Negotiation-needed events and signaling-state tracking
-- DataChannel identifiers, reliability settings, and buffered-amount metadata
-- Isolated runtimes with configurable Rust worker counts
-- Non-blocking operations through `CompletionStage`
-- Deterministic, bounded native shutdown
-- One runtime-owned DTLS certificate with a stable fingerprint
-- Ordered Java callbacks on a configurable executor
+- Bounded inbound queues that apply backpressure to native delivery
+- Text and binary messages
+- SCTP buffer, receive window, queue, and message-size limits
+- DataChannel and selected ICE candidate pair statistics
+- Runtime-owned DTLS certificates with certificate rotation
+- Deterministic, bounded shutdown
 
-Media capture, codecs, rendering, and signaling services are outside the current scope.
-
-## Requirements
-
-Applications need Java 17 or a newer Java release.
-
-Contributors also need Rust 1.94.1. Application builds do not compile Rust after you publish a JAR that contains the native library for their platform.
+Media capture, codecs, rendering, and signaling services are outside the project scope.
 
 ## Install
 
-Add Kestara WebRTC from Maven Central.
-
-### Gradle
+Add the dependency to `commonMain`:
 
 ```kotlin
-repositories {
-    mavenCentral()
-}
-
-dependencies {
-    implementation("com.enderdash:kestara-webrtc:0.2.0")
+kotlin {
+  sourceSets {
+    commonMain.dependencies {
+      implementation("com.enderdash:kestara-webrtc:0.3.0")
+    }
+  }
 }
 ```
 
-### Maven
+Use Maven Central as a repository. The consumer project needs a Kotlin version that can read the published Kotlin 2.4 metadata. JVM applications need Java 17 or a newer release.
 
-```xml
-<dependency>
-    <groupId>com.enderdash</groupId>
-    <artifactId>kestara-webrtc</artifactId>
-    <version>0.2.0</version>
-</dependency>
+If the JDK restricts native library access, add this JVM option:
+
+```text
+--enable-native-access=ALL-UNNAMED
 ```
 
-Maven Central releases contain native libraries for Linux, macOS, and Windows. Each release supports `x86_64` and `aarch64` systems.
+## Answer an offer
 
-## Quick start
+The application owns signaling. It must exchange descriptions and ICE candidates with the remote peer.
 
-```java
-import com.enderdash.kestara.webrtc.IceCandidate;
-import com.enderdash.kestara.webrtc.IceServer;
-import com.enderdash.kestara.webrtc.PeerConnection;
-import com.enderdash.kestara.webrtc.PeerConnectionConfiguration;
-import com.enderdash.kestara.webrtc.SessionDescription;
-import com.enderdash.kestara.webrtc.SessionDescriptionType;
-import com.enderdash.kestara.webrtc.WebRtcRuntime;
-import java.util.List;
+```kotlin
+import com.enderdash.kestara.webrtc.IceCandidate
+import com.enderdash.kestara.webrtc.IceServer
+import com.enderdash.kestara.webrtc.PeerConnection
+import com.enderdash.kestara.webrtc.PeerConnectionConfiguration
+import com.enderdash.kestara.webrtc.SessionDescription
+import com.enderdash.kestara.webrtc.SessionDescriptionType
+import com.enderdash.kestara.webrtc.WebRtcRuntime
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 
-var configuration = PeerConnectionConfiguration.DEFAULT.withIceServers(List.of(
-        IceServer.of("stun:stun.example.com:3478"),
+suspend fun answerOffer(
+  runtime: WebRtcRuntime,
+  scope: CoroutineScope,
+  remoteOfferSdp: String,
+  sendCandidate: suspend (IceCandidate) -> Unit,
+  sendAnswer: suspend (SessionDescription) -> Unit,
+): PeerConnection {
+  val peer = runtime.createPeerConnection(
+    PeerConnectionConfiguration(
+      iceServers = listOf(
+        IceServer("stun:stun.example.com:3478"),
         IceServer.authenticated(
-                "username",
-                "credential",
-                "turn:turn.example.com:3478?transport=udp")));
+          "username",
+          "credential",
+          "turn:turn.example.com:3478?transport=udp",
+        ),
+      ),
+    ),
+  )
+  scope.launch {
+    peer.localCandidates.collect { sendCandidate(it) }
+  }
 
-try (WebRtcRuntime runtime = WebRtcRuntime.create();
-        PeerConnection peer = runtime.createPeerConnection(configuration)) {
-    peer.onLocalCandidate(candidate -> sendCandidateToRemotePeer(candidate));
-    peer.onDataChannel(channel -> configureChannel(channel));
-
-    peer.setRemoteDescription(new SessionDescription(remoteOffer, SessionDescriptionType.OFFER));
-    SessionDescription answer = peer.setLocalDescription(SessionDescriptionType.ANSWER);
-    sendAnswerToRemotePeer(answer);
-
-    peer.addIceCandidate(new IceCandidate(remoteCandidate, "0", 0));
+  peer.setRemoteDescription(
+    SessionDescription(remoteOfferSdp, SessionDescriptionType.OFFER),
+  )
+  sendAnswer(peer.createAndSetLocalDescription(SessionDescriptionType.ANSWER))
+  return peer
 }
 ```
 
-The application provides signaling. It must send local descriptions and ICE candidates to the remote peer.
+Call `peer.addIceCandidate(candidate)` for each remote trickle candidate. Keep the returned peer and its runtime open while the session is active. Close both when the session ends.
 
-Set each callback before an operation that can produce its event. Subscribe to an incoming channel's message publisher in `onDataChannel`.
+## Use a DataChannel
 
-## Lifecycle and threads
+Create a channel and collect messages in a coroutine:
 
-Use one `WebRtcRuntime` for each independently owned application, plugin, or test lifecycle. A runtime owns its Rust worker pool, native handles, event thread, and peer connections. Closing it gives accepted operations time to finish, closes its peers, and joins the native worker threads. It cancels remaining work when the shutdown timeout expires.
+```kotlin
+val channel = peer.createDataChannel(
+  label = "control",
+  options = DataChannelOptions(
+    ordered = false,
+    maxRetransmits = 2,
+  ),
+)
 
-Configure its worker count and shutdown bound when needed:
-
-```java
-var options = WebRtcRuntimeOptions.DEFAULT
-        .withWorkerThreads(4)
-        .withShutdownTimeout(Duration.ofSeconds(10));
-
-try (WebRtcRuntime runtime = WebRtcRuntime.create(options)) {
-    WebRtcRuntimeDiagnostics diagnostics = runtime.diagnostics();
+launch {
+  channel.messages.collect { message ->
+    when (message) {
+      is DataChannelMessage.Text -> handleText(message.value)
+      is DataChannelMessage.Binary -> handleBinary(message.data)
+    }
+  }
 }
+
+channel.send("ready")
+channel.send(byteArrayOf(1, 2, 3))
 ```
 
-## Asynchronous operations
+Collect `peer.incomingDataChannels` to receive channels created by the remote peer. Collect `channel.events` for open, close, error, and buffered-amount events.
 
-Native peer and DataChannel operations return `CompletionStage` variants. They enqueue work on the owning Rust runtime instead of blocking the Java caller.
+Each event stream is a work queue. One collector receives each event. Do not use multiple collectors when every collector must see every event. The DataChannel message queue uses `SctpOptions.receiveQueueCapacity`. When the queue is full, Kestara pauses native event delivery until the collector makes room.
 
-```java
-peer.setRemoteDescriptionAsync(remoteDescription)
-        .thenCompose(ignored -> peer.setLocalDescriptionAsync(SessionDescriptionType.ANSWER))
-        .thenAccept(this::sendAnswerToRemotePeer)
-        .exceptionally(error -> {
-            reportNegotiationFailure(error);
-            return null;
-        });
+## Observe state
 
-CompletionStage<Void> sent = channel.sendAsync(byteBuffer);
-CompletionStage<Void> closed = peer.closeAsync();
+Connection state uses hot `StateFlow` values:
+
+```kotlin
+peer.state.collect { state -> updateConnectionState(state) }
+peer.iceConnectionState.collect { state -> updateIceState(state) }
+channel.state.collect { state -> updateChannelState(state) }
 ```
 
-The synchronous methods call the same asynchronous commands and wait up to the peer's configured operation timeout. Prefer the asynchronous methods on server request threads and callback executors.
+The other event sources are hot `Flow` views over bounded or buffered channels:
 
-Rust protocol tasks run on runtime-owned Tokio workers. One daemon Java thread per runtime receives native events. Kestara sends each peer's callbacks to its configured Java executor in event order. Application callbacks do not run on Rust protocol threads.
+- `peer.localCandidates`
+- `peer.localDescriptions`
+- `peer.incomingDataChannels`
+- `peer.negotiationNeeded`
+- `channel.messages`
+- `channel.events`
 
-Blocking Java operations use the configured operation timeout. Runtime shutdown uses `WebRtcRuntimeOptions.shutdownTimeout()`.
+## Configure lifecycle and transport
 
-## Receive messages with backpressure
+Use one runtime for each independently owned application, service, plugin, or test lifecycle.
 
-Each DataChannel has one inbound subscriber. The subscriber receives messages only after it requests demand.
+```kotlin
+val runtime = WebRtcRuntime.create(
+  WebRtcRuntimeOptions(
+    workerThreads = 4,
+    reactorThreads = 1,
+    shutdownTimeout = 10.seconds,
+  ),
+)
 
-```java
-channel.messages().subscribe(new Flow.Subscriber<>() {
-    private Flow.Subscription subscription;
-
-    @Override
-    public void onSubscribe(Flow.Subscription value) {
-        subscription = value;
-        subscription.request(1);
-    }
-
-    @Override
-    public void onNext(DataChannelMessage message) {
-        try (message) {
-            message.text().ifPresent(text -> handleText(text));
-            message.data().ifPresent(data -> handleBinary(data));
-        }
-        subscription.request(1);
-    }
-
-    @Override
-    public void onError(Throwable error) {
-        reportChannelFailure(error);
-    }
-
-    @Override
-    public void onComplete() {}
-});
+val configuration = PeerConnectionConfiguration(
+  minPort = 40_000,
+  maxPort = 40_100,
+  iceOptions = IceOptions(
+    networkTypes = setOf(IceNetworkType.UDP4, IceNetworkType.TCP4),
+    candidatePoolSize = 1,
+  ),
+  sctpOptions = SctpOptions(
+    sendBufferLimit = 8 * 1024 * 1024,
+    receiveBufferSize = 512 * 1024,
+    maximumMessageSize = 128 * 1024,
+    receiveQueueCapacity = 64,
+  ),
+)
 ```
 
-Always close each message after use. A message owns its native delivery slot and any direct binary storage. When all slots are in use, Kestara pauses native delivery and applies backpressure to the SCTP transport.
+Close child resources before their owner:
 
-Use a runtime-owned buffer to send binary data without copying it through a Java array:
+1. Close each `DataChannel`.
+2. Close each `PeerConnection`.
+3. Close the `WebRtcRuntime`.
 
-```java
-try (NativeBuffer message = runtime.allocateBuffer(payloadSize)) {
-    ByteBuffer data = message.buffer();
-    encodePayload(data);
-    data.flip();
-    channel.sendAsync(message);
-}
-```
+All close operations suspend until native cleanup finishes or the configured timeout expires. Runtime shutdown also closes any remaining child resources.
 
-Sending consumes the buffer. Do not use a `ByteBuffer` view after its `NativeBuffer` or `DataChannelMessage` is sent, closed, or invalidated by runtime shutdown.
+## Build and test
 
-## ICE and SCTP configuration
-
-Use `IceOptions` for transport behavior that does not belong to the standard ICE server list.
-
-```java
-var ice = IceOptions.DEFAULT
-        .withTimeouts(
-                Duration.ofSeconds(8),
-                Duration.ofSeconds(30),
-                Duration.ofSeconds(3))
-        .withConnectionAttempts(Duration.ofMillis(150), 9)
-        .withNetworkTypes(Set.of(IceNetworkType.UDP4, IceNetworkType.TCP4))
-        .withMdns(IceMdnsMode.QUERY_ONLY, Duration.ofSeconds(10))
-        .withNatMapping(new IceNatMapping(
-                List.of("203.0.113.10"),
-                IceNatMappingType.HOST))
-        .withCandidatePoolSize(1);
-
-var sctp = SctpOptions.DEFAULT
-        .withSendBufferLimit(8 * 1024 * 1024)
-        .withReceiveBufferSize(512 * 1024)
-        .withMaximumMessageSize(128 * 1024)
-        .withReceiveQueueCapacity(64);
-
-var configuration = PeerConnectionConfiguration.DEFAULT
-        .withIceOptions(ice)
-        .withSctpOptions(sctp)
-        .withPortRange(40_000, 40_100);
-```
-
-Kestara binds the real WebRTC transports when it selects a port. If a port is busy, it tries the next port in the range.
-
-The receive window must not be less than the maximum message size. The maximum supported message size is 256 KiB.
-
-An ICE candidate pool starts gathering when Kestara creates the peer. Kestara holds candidate callbacks until the local description is set.
-
-## Recover an ICE connection
-
-Update the ICE servers or transport policy before an ICE restart:
-
-```java
-var updated = configuration
-        .withIceServers(refreshedIceServers)
-        .withIceTransportPolicy(IceTransportPolicy.ALL);
-
-peer.setConfigurationAsync(updated)
-        .thenCompose(ignored -> peer.restartIceAsync())
-        .thenCompose(ignored -> peer.setLocalDescriptionAsync(SessionDescriptionType.OFFER))
-        .thenAccept(this::sendOfferToRemotePeer);
-```
-
-`setConfigurationAsync` changes only the ICE servers and transport policy of an existing peer. New transport and SCTP options require a new peer.
-
-## DTLS certificate ownership
-
-Each runtime creates one ECDSA P-256 certificate. All peers in that runtime use the same certificate.
-
-```java
-String sha256Fingerprint = runtime.certificateFingerprint();
-```
-
-Create a new runtime to rotate the certificate. Closing the runtime removes the certificate and its private key from native memory.
-
-## Build
-
-Run the complete verification suite:
+Contributors need Java 17 and Rust 1.94.1. Run the full host verification suite:
 
 ```bash
 ./gradlew check
 ```
 
-Create the host-platform JAR:
+Build a specific Kotlin/Native target:
 
 ```bash
-./gradlew build
+./gradlew linkDebugTestLinuxX64
+./gradlew compileKotlinLinuxArm64
+./gradlew linkDebugTestMacosArm64
+./gradlew linkDebugTestMingwX64
 ```
 
-Gradle builds the Rust library for the current operating system and architecture. It adds the library under `META-INF/native` in the JAR.
-
-Maintainers can publish a signed cross-platform release with the [release workflow](./PUBLISHING.md).
+Gradle builds the required Rust static library before cinterop. Build each Kotlin/Native target on its matching host and architecture.
 
 ## Architecture
 
-The Java layer owns the public API and application event dispatch. Each Rust runtime owns its WebRTC state, networking, command queue, and native resource cleanup. JNI is a small handle-based boundary between these layers.
+`commonMain` owns the public API, coroutine lifecycle, event routing, validation, and statistics decoding. The JVM adapter uses a small JNI binding. Kotlin/Native uses a stable C ABI and links the Rust static library through cinterop.
 
-Each Java and native release declares an ABI version. Library startup stops when these versions differ. The public API does not expose EnderDash signaling, RPC, Minecraft, JNI, or Rust implementation types.
+Each Rust runtime owns its WebRTC state, Tokio workers, network resources, command queue, and native handles. Rust panics do not cross JNI or the C ABI. Application code does not run on protocol threads.
+
+The Kotlin and Rust layers declare a native ABI version. Runtime creation stops when the versions differ. Public types do not expose JNI, cinterop, Rust, EnderDash signaling, RPC, or Minecraft details.
 
 ## Status
 
-The end-to-end integration test creates two local peers, exchanges an offer, answer, and trickle ICE candidates, and opens an unordered, partially reliable DataChannel. It verifies bounded delivery, subscriber demand, native direct buffers, and metadata on both peers.
+Shared integration tests run the same API on JVM and Kotlin/Native. They create two local peers, exchange an offer, answer, and trickle ICE candidates, then open a partially reliable DataChannel. The tests verify binary delivery and statistics.
 
-Before the first stable release, the project still needs broader network tests. It also needs browser compatibility and shutdown-cycle soak tests.
+The project still needs broader public-network tests, browser compatibility tests, and long shutdown-cycle soak tests before a stable release.
 
 ## License
 

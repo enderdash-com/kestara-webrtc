@@ -1,0 +1,3 @@
+headers = kestara_webrtc.h
+headerFilter = kestara_webrtc.h
+package = com.enderdash.kestara.webrtc.native

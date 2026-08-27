@@ -235,7 +235,7 @@ struct RuntimeController {
 }
 
 struct NativeBufferEntry {
-    data: Vec<u8>,
+    _data: Vec<u8>,
     _delivery_permit: Option<OwnedSemaphorePermit>,
 }
 
@@ -353,10 +353,6 @@ pub fn certificate_pem(runtime_handle: u64) -> Result<String, String> {
     Ok(certificate.serialize_pem())
 }
 
-pub fn allocate_buffer(runtime_handle: u64, capacity: usize) -> Result<NativeBufferView, String> {
-    register_buffer(runtime_handle, vec![0; capacity], None)
-}
-
 pub fn register_delivery_buffer(
     runtime_handle: u64,
     data: Option<Vec<u8>>,
@@ -375,30 +371,6 @@ pub fn release_buffer(runtime_handle: u64, buffer_handle: u64) -> Result<(), Str
     Ok(())
 }
 
-pub fn take_buffer(
-    runtime_handle: u64,
-    buffer_handle: u64,
-    offset: usize,
-    length: usize,
-) -> Result<Vec<u8>, String> {
-    let controller = get_runtime(runtime_handle)?;
-    let mut entry = controller
-        .buffers
-        .lock()
-        .map_err(|_| "The native buffer registry is poisoned".to_owned())?
-        .remove(&buffer_handle)
-        .ok_or_else(|| format!("Unknown or consumed native buffer: {buffer_handle}"))?;
-    let end = offset
-        .checked_add(length)
-        .filter(|end| *end <= entry.data.len())
-        .ok_or_else(|| "Native buffer slice is outside its allocation".to_owned())?;
-    if offset != 0 && length != 0 {
-        entry.data.copy_within(offset..end, 0);
-    }
-    entry.data.truncate(length);
-    Ok(entry.data)
-}
-
 fn register_buffer(
     runtime_handle: u64,
     mut data: Vec<u8>,
@@ -415,7 +387,7 @@ fn register_buffer(
         .insert(
             handle,
             NativeBufferEntry {
-                data,
+                _data: data,
                 _delivery_permit: delivery_permit,
             },
         );

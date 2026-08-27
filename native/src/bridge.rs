@@ -13,12 +13,12 @@ use webrtc::peer_connection::{
     CipherSuiteId, RTCIceCandidateInit, RTCIceCandidateType, RTCIceServer, RTCSessionDescription,
 };
 
-use crate::NATIVE_ABI_VERSION;
 use crate::registry::{
     DataChannelConfiguration, DtlsConfiguration, IceConfiguration, PeerConfiguration,
     SctpConfiguration, TransportConfiguration,
 };
 use crate::runtime::{self, Command, RuntimeConfiguration};
+use crate::{LIBRARY_VERSION, NATIVE_ABI_VERSION};
 
 #[unsafe(no_mangle)]
 pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeAbiVersion(
@@ -75,7 +75,7 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 ) -> jstring {
     unowned_env
         .with_env(|env| -> jni::errors::Result<jstring> {
-            Ok(env.new_string(env!("CARGO_PKG_VERSION"))?.into_raw())
+            Ok(env.new_string(LIBRARY_VERSION)?.into_raw())
         })
         .resolve::<ThrowRuntimeExAndDefault>()
 }
@@ -657,42 +657,6 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 }
 
 #[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeAllocateBuffer(
-    mut unowned_env: EnvUnowned<'_>,
-    _class: JClass<'_>,
-    runtime_handle: jlong,
-    capacity: jint,
-) -> jobject {
-    unowned_env
-        .with_env(|env| -> jni::errors::Result<jobject> {
-            let result = (|| {
-                let runtime_handle = handle_from_jlong(runtime_handle)?;
-                let capacity = usize::try_from(capacity)
-                    .map_err(|_| "Native buffer capacity must not be negative".to_owned())?;
-                if capacity > 256 * 1024 {
-                    return Err("Native buffer capacity must not exceed 262144 bytes".to_owned());
-                }
-                runtime::allocate_buffer(runtime_handle, capacity)
-            })();
-            let view = operation_result(env, result)?;
-            // The allocation is retained in the runtime registry until Java transfers or closes
-            // the descriptor, so the address remains valid for the direct buffer's lifetime.
-            let buffer = unsafe { env.new_direct_byte_buffer(view.address, view.length)? };
-            let buffer_object = JObject::from(buffer);
-            let descriptor = env.new_object(
-                jni_str!("com/enderdash/kestara/webrtc/internal/NativeBufferDescriptor"),
-                jni_sig!("(JLjava/nio/ByteBuffer;)V"),
-                &[
-                    JValue::Long(handle_to_jlong(view.handle).unwrap_or_default()),
-                    JValue::Object(&buffer_object),
-                ],
-            )?;
-            Ok(descriptor.into_raw())
-        })
-        .resolve::<ThrowRuntimeExAndDefault>()
-}
-
-#[unsafe(no_mangle)]
 pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeReleaseBuffer(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
@@ -705,58 +669,6 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                 runtime::release_buffer(
                     handle_from_jlong(runtime_handle)?,
                     handle_from_jlong(buffer_handle)?,
-                )
-            })();
-            operation_result(env, result)
-        })
-        .resolve::<ThrowRuntimeExAndDefault>();
-}
-
-#[unsafe(no_mangle)]
-pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitSendDataChannelBuffer(
-    mut unowned_env: EnvUnowned<'_>,
-    _class: JClass<'_>,
-    runtime_handle: jlong,
-    operation_handle: jlong,
-    channel_handle: jlong,
-    buffer_handle: jlong,
-    offset: jint,
-    length: jint,
-    try_send: jboolean,
-    timeout_millis: jlong,
-) {
-    unowned_env
-        .with_env(|env| -> jni::errors::Result<()> {
-            let result = (|| {
-                let runtime_handle = handle_from_jlong(runtime_handle)?;
-                let data = runtime::take_buffer(
-                    runtime_handle,
-                    handle_from_jlong(buffer_handle)?,
-                    usize::try_from(offset)
-                        .map_err(|_| "Native buffer offset must not be negative".to_owned())?,
-                    usize::try_from(length)
-                        .map_err(|_| "Native buffer length must not be negative".to_owned())?,
-                )?;
-                let operation_handle = handle_from_jlong(operation_handle)?;
-                let channel_handle = handle_from_jlong(channel_handle)?;
-                let timeout = timeout(timeout_millis)?;
-                runtime::submit(
-                    runtime_handle,
-                    if try_send {
-                        Command::TrySendBinary {
-                            operation_handle,
-                            timeout,
-                            channel_handle,
-                            data,
-                        }
-                    } else {
-                        Command::SendBinary {
-                            operation_handle,
-                            timeout,
-                            channel_handle,
-                            data,
-                        }
-                    },
                 )
             })();
             operation_result(env, result)
@@ -1101,7 +1013,7 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                 None => JObject::null(),
             };
             let object = env.new_object(
-                jni_str!("com/enderdash/kestara/webrtc/internal/NativeEvent"),
+                jni_str!("com/enderdash/kestara/webrtc/internal/JvmNativeEvent"),
                 jni_sig!("(IJJJLjava/lang/String;Ljava/lang/String;I[BJLjava/nio/ByteBuffer;)V"),
                 &[
                     JValue::Int(event.kind),
@@ -1270,7 +1182,10 @@ fn operation_result<T: Default>(
     }
 }
 
-fn parse_description(sdp: String, description_type: jint) -> Result<RTCSessionDescription, String> {
+pub(crate) fn parse_description(
+    sdp: String,
+    description_type: jint,
+) -> Result<RTCSessionDescription, String> {
     let result = match description_type {
         0 => RTCSessionDescription::offer(sdp),
         1 => RTCSessionDescription::answer(sdp),
@@ -1285,13 +1200,13 @@ fn parse_description(sdp: String, description_type: jint) -> Result<RTCSessionDe
     result.map_err(|error| format!("Invalid session description: {error}"))
 }
 
-fn timeout(millis: jlong) -> Result<Duration, String> {
+pub(crate) fn timeout(millis: jlong) -> Result<Duration, String> {
     let millis =
         u64::try_from(millis).map_err(|_| "Operation timeout must not be negative".to_owned())?;
     Ok(Duration::from_millis(millis))
 }
 
-fn optional_duration(millis: jlong, name: &str) -> Result<Option<Duration>, String> {
+pub(crate) fn optional_duration(millis: jlong, name: &str) -> Result<Option<Duration>, String> {
     if millis == -1 {
         Ok(None)
     } else {
@@ -1302,7 +1217,7 @@ fn optional_duration(millis: jlong, name: &str) -> Result<Option<Duration>, Stri
     }
 }
 
-fn positive_u32(value: jint, name: &str) -> Result<u32, String> {
+pub(crate) fn positive_u32(value: jint, name: &str) -> Result<u32, String> {
     let value = u32::try_from(value).map_err(|_| format!("The {name} must be positive"))?;
     if value == 0 {
         Err(format!("The {name} must be positive"))
@@ -1311,7 +1226,7 @@ fn positive_u32(value: jint, name: &str) -> Result<u32, String> {
     }
 }
 
-fn network_types(mask: jint) -> Result<Vec<NetworkType>, String> {
+pub(crate) fn network_types(mask: jint) -> Result<Vec<NetworkType>, String> {
     if mask <= 0 || mask & !0b1111 != 0 {
         return Err("Invalid ICE network type mask".to_owned());
     }
@@ -1331,7 +1246,7 @@ fn network_types(mask: jint) -> Result<Vec<NetworkType>, String> {
     Ok(values)
 }
 
-fn cipher_suites(mask: jint) -> Result<Vec<CipherSuiteId>, String> {
+pub(crate) fn cipher_suites(mask: jint) -> Result<Vec<CipherSuiteId>, String> {
     if mask <= 0 || mask & !0xff != 0 {
         return Err("Invalid DTLS cipher suite mask".to_owned());
     }
@@ -1352,11 +1267,11 @@ fn cipher_suites(mask: jint) -> Result<Vec<CipherSuiteId>, String> {
         .collect())
 }
 
-fn port(value: jint, name: &str) -> Result<u16, String> {
+pub(crate) fn port(value: jint, name: &str) -> Result<u16, String> {
     u16::try_from(value).map_err(|_| format!("The {name} port must be between 0 and 65535"))
 }
 
-fn optional_u16(value: jint, name: &str) -> Result<Option<u16>, String> {
+pub(crate) fn optional_u16(value: jint, name: &str) -> Result<Option<u16>, String> {
     if value == -1 {
         Ok(None)
     } else {

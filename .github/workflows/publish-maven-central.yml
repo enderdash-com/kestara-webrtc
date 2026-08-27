@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Release version, for example 0.1.0
+        description: Release version, for example 0.3.0
         required: true
         type: string
   workflow_call:
@@ -110,6 +110,7 @@ jobs:
 
       - name: Build native resource
         env:
+          VERSION: ${{ inputs.version }}
           CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
           CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
           AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
@@ -126,8 +127,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  publish:
-    name: Publish Kestara WebRTC
+  publish-jvm-root:
+    name: Publish JVM and multiplatform metadata
     needs: build-native
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -165,7 +166,70 @@ jobs:
           ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_CENTRAL_SIGNING_KEY }}
           ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_CENTRAL_SIGNING_PASSWORD }}
         run: >-
-          ./gradlew publishToMavenCentral
+          ./gradlew
+          publishJvmPublicationToMavenCentralRepository
+          publishKotlinMultiplatformPublicationToMavenCentralRepository
           -PkestaraNativeResources=release-native-resources
+          --no-configuration-cache
+          --stacktrace
+
+  publish-native:
+    name: Publish ${{ matrix.publication }}
+    needs: publish-jvm-root
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - publication: linuxX64
+            runner: ubuntu-24.04
+            rust_target: x86_64-unknown-linux-gnu
+            task: publishLinuxX64PublicationToMavenCentralRepository
+          - publication: linuxArm64
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
+            task: publishLinuxArm64PublicationToMavenCentralRepository
+          - publication: macosArm64
+            runner: macos-15
+            rust_target: aarch64-apple-darwin
+            task: publishMacosArm64PublicationToMavenCentralRepository
+          - publication: mingwX64
+            runner: windows-2025
+            rust_target: x86_64-pc-windows-gnu
+            task: publishMingwX64PublicationToMavenCentralRepository
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.ref }}
+
+      - name: Install Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Configure Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+
+      - name: Publish to Maven Central
+        env:
+          VERSION: ${{ inputs.version }}
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey: ${{ secrets.MAVEN_CENTRAL_SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword: ${{ secrets.MAVEN_CENTRAL_SIGNING_PASSWORD }}
+        run: >-
+          ./gradlew ${{ matrix.task }}
           --no-configuration-cache
           --stacktrace

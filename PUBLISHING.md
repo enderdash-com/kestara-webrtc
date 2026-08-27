@@ -1,10 +1,10 @@
 # Publish Kestara WebRTC
 
-This guide is for Kestara WebRTC maintainers. It publishes one signed, cross-platform JAR to Maven Central and creates a GitHub Release.
+This guide is for Kestara WebRTC maintainers. It publishes signed Kotlin Multiplatform artifacts to Maven Central and creates a GitHub Release.
 
 ## Requirements
 
-Register the `com.enderdash` namespace in the Maven Central Portal. Add the following GitHub repository secrets:
+Register the `com.enderdash` namespace in the Maven Central Portal. Add these GitHub repository secrets:
 
 - `MAVEN_CENTRAL_USERNAME`
 - `MAVEN_CENTRAL_PASSWORD`
@@ -18,34 +18,37 @@ The signing key must use ASCII armor. Publish its public key to a supported key 
 
 1. Open the **Publish Release** workflow in GitHub Actions.
 2. Select **Run workflow**.
-3. Enter a release version, such as `0.1.0`.
+3. Enter a release version, such as `0.3.0`.
 4. Start the workflow from the commit that you want to publish.
 
-The workflow builds six native libraries:
+The workflow publishes these Kotlin modules:
 
-- Linux `x86_64` and `aarch64`
-- macOS `x86_64` and `aarch64`
-- Windows `x86_64` and `aarch64`
+- Multiplatform root metadata
+- JVM
+- Linux `x86_64`
+- Linux `aarch64`
+- macOS Apple silicon
+- Windows `x86_64`
 
-Each target uses an isolated job on its operating system. The Linux ARM64 job uses the GNU cross-compiler. The Windows ARM64 job uses the MSVC cross-compiler. Both macOS targets use native GitHub runners.
+The JVM job first builds native libraries for Linux, macOS, and Windows on `x86_64` and `aarch64`. It packages all six libraries in the JVM artifact. Each Kotlin/Native publication builds and links its Rust static library on the correct host.
 
-The publish job downloads and verifies all six native resources. It combines them with the Java classes, sources, Javadoc, POM, checksums, and signatures. It then releases the deployment automatically.
-
-After Maven Central accepts the deployment, the workflow creates a `v<version>` GitHub Release. The release contains generated notes and no binary attachments.
+After Maven Central accepts every publication, the workflow creates a `v<version>` GitHub Release. The release contains generated notes and no binary attachments.
 
 Maven Central does not permit replacement of a released version. Use a new version if a previous publication exists.
 
-## Validate local publication metadata
+## Validate local publications
 
-Publish the host-platform artifact to the local Maven repository:
+Publish the host artifacts to the local Maven repository:
 
 ```bash
-VERSION=0.1.0-SNAPSHOT ./gradlew publishToMavenLocal
+VERSION=0.3.0-SNAPSHOT ./gradlew publishToMavenLocal
 ```
 
-The generated artifacts are under `~/.m2/repository/com/enderdash/kestara-webrtc/0.1.0-SNAPSHOT/`.
+Host restrictions can disable publications that the current operating system cannot build.
 
-Validate an assembled release directory before publication:
+The generated artifacts are under `~/.m2/repository/com/enderdash/`.
+
+Validate a complete JVM native-resource directory before publication:
 
 ```bash
 ./gradlew verifyReleaseNativeResources \

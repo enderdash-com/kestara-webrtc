@@ -11,15 +11,18 @@ permissions:
 
 jobs:
   verify:
-    name: Verify (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Verify (${{ matrix.target }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-          - windows-latest
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: windows-2025
+            target: x86_64-pc-windows-gnu
 
     steps:
       - name: Check out repository
@@ -35,9 +38,35 @@ jobs:
         uses: dtolnay/rust-toolchain@1.94.1
         with:
           components: clippy,rustfmt
+          targets: ${{ matrix.target }}
 
       - name: Configure Gradle
         uses: gradle/actions/setup-gradle@v6
 
       - name: Verify project
         run: ./gradlew check
+
+  compile-linux-arm64:
+    name: Compile (linuxArm64)
+    runs-on: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install Java
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@1.94.1
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Configure Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Compile Linux ARM64
+        run: ./gradlew compileKotlinLinuxArm64
