@@ -352,8 +352,10 @@ public data class IceCandidateStats(
 
 public data class IceCandidatePairStats(
   public val id: String,
-  public val localCandidate: IceCandidateStats,
-  public val remoteCandidate: IceCandidateStats,
+  public val localCandidateId: String,
+  public val remoteCandidateId: String,
+  public val localCandidate: IceCandidateStats?,
+  public val remoteCandidate: IceCandidateStats?,
   public val packetsSent: Long,
   public val packetsReceived: Long,
   public val bytesSent: Long,

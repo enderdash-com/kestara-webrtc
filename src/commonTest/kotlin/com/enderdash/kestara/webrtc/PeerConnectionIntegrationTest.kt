@@ -69,7 +69,9 @@ class PeerConnectionIntegrationTest {
         assertContentEquals(payload, message.data)
 
         val stats = offerer.getStats()
-        assertTrue(stats.transport.selectedCandidatePair != null)
+        val selectedPair = requireNotNull(stats.transport.selectedCandidatePair)
+        assertTrue(selectedPair.localCandidateId.isNotBlank())
+        assertTrue(selectedPair.remoteCandidateId.isNotBlank())
         assertTrue(stats.dataChannels.isNotEmpty())
 
         offererRelay.cancel()

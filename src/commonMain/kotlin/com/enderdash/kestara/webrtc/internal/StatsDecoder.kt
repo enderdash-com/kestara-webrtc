@@ -9,7 +9,7 @@ import com.enderdash.kestara.webrtc.WebRtcException
 import kotlin.time.Instant
 
 internal object StatsDecoder {
-  private const val FORMAT_VERSION = 1
+  private const val FORMAT_VERSION = 2
 
   fun decode(data: ByteArray): PeerConnectionStats = try {
     val input = BigEndianReader(data)
@@ -58,8 +58,10 @@ internal object StatsDecoder {
 
   private fun BigEndianReader.readPair(): IceCandidatePairStats = IceCandidatePairStats(
     id = readString(),
-    localCandidate = readCandidate(),
-    remoteCandidate = readCandidate(),
+    localCandidateId = readString(),
+    remoteCandidateId = readString(),
+    localCandidate = if (readBoolean()) readCandidate() else null,
+    remoteCandidate = if (readBoolean()) readCandidate() else null,
     packetsSent = readLong(),
     packetsReceived = readLong(),
     bytesSent = readLong(),

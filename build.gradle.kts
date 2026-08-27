@@ -61,6 +61,7 @@ fun KotlinNativeTarget.configureKestaraInterop(
     )
     tasks.named(interopProcessingTaskName).configure {
       dependsOn(buildTask)
+      inputs.file(staticLibrary)
     }
   }
 }

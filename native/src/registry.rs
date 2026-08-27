@@ -875,7 +875,7 @@ fn encode_stats(report: &RTCStatsReport) -> Result<Vec<u8>, String> {
         .transport()
         .ok_or_else(|| "The native stats report has no transport entry".to_owned())?;
     let mut output = Vec::with_capacity(512);
-    write_u32(&mut output, 1);
+    write_u32(&mut output, 2);
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(|error| format!("The system clock is before the Unix epoch: {error}"))?
@@ -898,12 +898,14 @@ fn encode_stats(report: &RTCStatsReport) -> Result<Vec<u8>, String> {
     if let Some(RTCStatsReportEntry::IceCandidatePair(pair)) =
         report.get(&transport.selected_candidate_pair_id)
     {
-        let local = candidate(report, &pair.local_candidate_id)?;
-        let remote = candidate(report, &pair.remote_candidate_id)?;
+        let local = candidate(report, &pair.local_candidate_id);
+        let remote = candidate(report, &pair.remote_candidate_id);
         output.push(1);
         write_string(&mut output, &pair.stats.id)?;
-        write_candidate(&mut output, local)?;
-        write_candidate(&mut output, remote)?;
+        write_string(&mut output, &pair.local_candidate_id)?;
+        write_string(&mut output, &pair.remote_candidate_id)?;
+        write_optional_candidate(&mut output, local)?;
+        write_optional_candidate(&mut output, remote)?;
         write_u64(&mut output, pair.packets_sent);
         write_u64(&mut output, pair.packets_received);
         write_u64(&mut output, pair.bytes_sent);
@@ -945,26 +947,34 @@ fn encode_stats(report: &RTCStatsReport) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
-fn candidate<'a>(report: &'a RTCStatsReport, id: &str) -> Result<&'a RTCIceCandidateStats, String> {
+fn candidate<'a>(report: &'a RTCStatsReport, id: &str) -> Option<&'a RTCIceCandidateStats> {
     if let Some(
         RTCStatsReportEntry::LocalCandidate(candidate)
         | RTCStatsReportEntry::RemoteCandidate(candidate),
     ) = report.get(id)
     {
-        return Ok(candidate);
+        return Some(candidate);
     }
-    report
-        .iter()
-        .find_map(|entry| match entry {
-            RTCStatsReportEntry::LocalCandidate(candidate)
-            | RTCStatsReportEntry::RemoteCandidate(candidate)
-                if candidate.stats.id.ends_with(id) =>
-            {
-                Some(candidate)
-            }
-            _ => None,
-        })
-        .ok_or_else(|| format!("The native stats report is missing ICE candidate {id}"))
+    report.iter().find_map(|entry| match entry {
+        RTCStatsReportEntry::LocalCandidate(candidate)
+        | RTCStatsReportEntry::RemoteCandidate(candidate)
+            if candidate.stats.id.ends_with(id) =>
+        {
+            Some(candidate)
+        }
+        _ => None,
+    })
+}
+
+fn write_optional_candidate(
+    output: &mut Vec<u8>,
+    candidate: Option<&RTCIceCandidateStats>,
+) -> Result<(), String> {
+    output.push(u8::from(candidate.is_some()));
+    if let Some(candidate) = candidate {
+        write_candidate(output, candidate)?;
+    }
+    Ok(())
 }
 
 fn write_candidate(output: &mut Vec<u8>, candidate: &RTCIceCandidateStats) -> Result<(), String> {
