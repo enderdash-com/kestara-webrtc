@@ -1012,7 +1012,7 @@ dependencies = [
  "jni",
  "rcgen",
  "rtc",
- "rtc-ice",
+ "rtc-ice 0.21.0-beta.2",
  "serde",
  "serde_json",
  "tokio",
@@ -1493,17 +1493,17 @@ dependencies = [
  "ring",
  "rtc-datachannel",
  "rtc-dtls",
- "rtc-ice",
+ "rtc-ice 0.20.3",
  "rtc-interceptor",
- "rtc-mdns",
+ "rtc-mdns 0.20.3",
  "rtc-media",
  "rtc-rtcp",
  "rtc-rtp",
  "rtc-sctp",
  "rtc-sdp",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "rtc-srtp",
- "rtc-stun",
+ "rtc-stun 0.20.3",
  "rtc-turn",
  "rustls",
  "sansio",
@@ -1515,6 +1515,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtc-crypto"
+version = "0.21.0-beta.2"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=d2307f3e800cba0b25d72f9d7a5d52a2a6567448#d2307f3e800cba0b25d72f9d7a5d52a2a6567448"
+dependencies = [
+ "aes",
+ "ccm",
+ "ctr",
+ "hmac",
+ "md-5",
+ "rand",
+ "ring",
+ "sha1",
+ "subtle",
+ "thiserror 2.0.20",
+ "zeroize",
+]
+
+[[package]]
 name = "rtc-datachannel"
 version = "0.20.3"
 source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
@@ -1522,7 +1540,7 @@ dependencies = [
  "bytes",
  "log",
  "rtc-sctp",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "sansio",
 ]
 
@@ -1549,7 +1567,7 @@ dependencies = [
  "rcgen",
  "ring",
  "rkyv",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "rustls",
  "sec1",
  "sha1",
@@ -1568,9 +1586,27 @@ dependencies = [
  "crc",
  "log",
  "rand",
- "rtc-mdns",
- "rtc-shared",
- "rtc-stun",
+ "rtc-mdns 0.20.3",
+ "rtc-shared 0.20.3",
+ "rtc-stun 0.20.3",
+ "sansio",
+ "serde",
+ "url",
+ "uuid",
+]
+
+[[package]]
+name = "rtc-ice"
+version = "0.21.0-beta.2"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=d2307f3e800cba0b25d72f9d7a5d52a2a6567448#d2307f3e800cba0b25d72f9d7a5d52a2a6567448"
+dependencies = [
+ "bytes",
+ "crc",
+ "log",
+ "rtc-crypto",
+ "rtc-mdns 0.21.0-beta.2",
+ "rtc-shared 0.21.0-beta.2",
+ "rtc-stun 0.21.0-beta.2",
  "sansio",
  "serde",
  "url",
@@ -1587,7 +1623,7 @@ dependencies = [
  "rtc-interceptor-derive",
  "rtc-rtcp",
  "rtc-rtp",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "sansio",
 ]
 
@@ -1608,7 +1644,19 @@ source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771
 dependencies = [
  "bytes",
  "log",
- "rtc-shared",
+ "rtc-shared 0.20.3",
+ "sansio",
+ "socket2",
+]
+
+[[package]]
+name = "rtc-mdns"
+version = "0.21.0-beta.2"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=d2307f3e800cba0b25d72f9d7a5d52a2a6567448#d2307f3e800cba0b25d72f9d7a5d52a2a6567448"
+dependencies = [
+ "bytes",
+ "log",
+ "rtc-shared 0.21.0-beta.2",
  "sansio",
  "socket2",
 ]
@@ -1622,7 +1670,7 @@ dependencies = [
  "bytes",
  "rand",
  "rtc-rtp",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "thiserror 2.0.20",
 ]
 
@@ -1632,7 +1680,7 @@ version = "0.20.3"
 source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "bytes",
- "rtc-shared",
+ "rtc-shared 0.20.3",
 ]
 
 [[package]]
@@ -1643,7 +1691,7 @@ dependencies = [
  "bytes",
  "memchr",
  "rand",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "serde",
 ]
 
@@ -1656,7 +1704,7 @@ dependencies = [
  "crc32c",
  "log",
  "rand",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "rustc-hash",
  "slab",
  "thiserror 2.0.20",
@@ -1668,7 +1716,7 @@ version = "0.20.3"
 source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
 dependencies = [
  "rand",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "url",
 ]
 
@@ -1694,6 +1742,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "rtc-shared"
+version = "0.21.0-beta.2"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=d2307f3e800cba0b25d72f9d7a5d52a2a6567448#d2307f3e800cba0b25d72f9d7a5d52a2a6567448"
+dependencies = [
+ "bitflags 1.3.2",
+ "bytes",
+ "nix",
+ "rand",
+ "serde",
+ "substring",
+ "thiserror 2.0.20",
+ "url",
+ "winapi",
+]
+
+[[package]]
 name = "rtc-srtp"
 version = "0.20.3"
 source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771eb9160ad411724c3cbe#81a8ba796d058daa07771eb9160ad411724c3cbe"
@@ -1706,7 +1770,7 @@ dependencies = [
  "ring",
  "rtc-rtcp",
  "rtc-rtp",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "sha1",
  "subtle",
 ]
@@ -1723,9 +1787,25 @@ dependencies = [
  "md-5",
  "rand",
  "ring",
- "rtc-shared",
+ "rtc-shared 0.20.3",
  "sansio",
  "subtle",
+ "url",
+]
+
+[[package]]
+name = "rtc-stun"
+version = "0.21.0-beta.2"
+source = "git+https://github.com/enderdash-com/rtc.git?rev=d2307f3e800cba0b25d72f9d7a5d52a2a6567448#d2307f3e800cba0b25d72f9d7a5d52a2a6567448"
+dependencies = [
+ "base64",
+ "bytes",
+ "crc",
+ "lazy_static",
+ "rand",
+ "rtc-crypto",
+ "rtc-shared 0.21.0-beta.2",
+ "sansio",
  "url",
 ]
 
@@ -1736,8 +1816,8 @@ source = "git+https://github.com/enderdash-com/rtc.git?rev=81a8ba796d058daa07771
 dependencies = [
  "bytes",
  "log",
- "rtc-shared",
- "rtc-stun",
+ "rtc-shared 0.20.3",
+ "rtc-stun 0.20.3",
  "sansio",
 ]
 
