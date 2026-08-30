@@ -22,7 +22,7 @@ serde_json = "1.0.149"
 rtc = { git = "https://github.com/enderdash-com/rtc.git", rev = "81a8ba796d058daa07771eb9160ad411724c3cbe", features = ["pem"] }
 ice = { package = "rtc-ice", git = "https://github.com/enderdash-com/rtc.git", rev = "81a8ba796d058daa07771eb9160ad411724c3cbe" }
 tokio = { version = "1.52.0", features = ["rt-multi-thread", "time"] }
-webrtc = { git = "https://github.com/enderdash-com/webrtc.git", rev = "18bf3d45cb284d1b18971de757874da51e075096" }
+webrtc = { git = "https://github.com/enderdash-com/webrtc.git", rev = "f4844a0fd2702356b24379d3dd15576e3ad0a1fb" }
 
 [lints.rust]
 unsafe_op_in_unsafe_fn = "deny"
