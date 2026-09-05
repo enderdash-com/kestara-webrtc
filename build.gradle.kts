@@ -108,8 +108,8 @@ kotlin {
       implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     }
     jvmTest.dependencies {
-      implementation("org.junit.jupiter:junit-jupiter:6.1.2")
-      runtimeOnly("org.junit.platform:junit-platform-launcher:6.1.2")
+      implementation("org.junit.jupiter:junit-jupiter:6.1.3")
+      runtimeOnly("org.junit.platform:junit-platform-launcher:6.1.3")
     }
   }
 }
