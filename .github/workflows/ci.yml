@@ -48,7 +48,7 @@ jobs:
 
   compile-linux-arm64:
     name: Compile (linuxArm64)
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
 
     steps:
       - name: Check out repository
