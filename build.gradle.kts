@@ -11,8 +11,8 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
 
 plugins {
-  kotlin("multiplatform") version "2.4.10"
-  kotlin("plugin.serialization") version "2.4.10"
+  kotlin("multiplatform") version "2.4.20"
+  kotlin("plugin.serialization") version "2.4.20"
   id("com.vanniktech.maven.publish") version "0.37.0"
 }
 
@@ -108,8 +108,8 @@ kotlin {
       implementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
     }
     jvmTest.dependencies {
-      implementation("org.junit.jupiter:junit-jupiter:6.1.2")
-      runtimeOnly("org.junit.platform:junit-platform-launcher:6.1.2")
+      implementation("org.junit.jupiter:junit-jupiter:6.1.3")
+      runtimeOnly("org.junit.platform:junit-platform-launcher:6.1.3")
     }
   }
 }
