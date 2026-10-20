@@ -92,7 +92,7 @@ jobs:
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "25"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@1.94.1
@@ -169,7 +169,7 @@ jobs:
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "25"
 
       - name: Configure Gradle
         uses: gradle/actions/setup-gradle@v6
@@ -235,7 +235,7 @@ jobs:
         uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "25"
 
       - name: Install Rust
         if: inputs.native_publication == 'all' || inputs.native_publication == matrix.publication
