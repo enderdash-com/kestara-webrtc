@@ -19,7 +19,7 @@ jni = "0.22.4"
 rcgen = "0.14.9"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
-rtc = { git = "https://github.com/enderdash-com/rtc.git", rev = "81a8ba796d058daa07771eb9160ad411724c3cbe", features = ["pem"] }
+rtc = { git = "https://github.com/enderdash-com/rtc.git", rev = "d2307f3e800cba0b25d72f9d7a5d52a2a6567448", features = ["pem"] }
 ice = { package = "rtc-ice", git = "https://github.com/enderdash-com/rtc.git", rev = "81a8ba796d058daa07771eb9160ad411724c3cbe" }
 tokio = { version = "1.52.0", features = ["rt-multi-thread", "time"] }
 webrtc = { git = "https://github.com/enderdash-com/webrtc.git", rev = "18bf3d45cb284d1b18971de757874da51e075096" }
