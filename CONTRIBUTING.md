@@ -51,3 +51,10 @@ Use an imperative and concise description. Add a commit body when the reason is 
 ## Pull requests
 
 Keep each pull request focused on one change. Describe the behavior, the reason for the change, and the verification that you completed.
+
+## Git hooks
+
+Install [Lefthook](https://lefthook.dev/install/) 1.13.6 or newer, then run `lefthook install` once per checkout.
+Commits check staged whitespace. Before pushing source or build-script changes, the hook runs `./gradlew check`.
+The pre-push hook compares `HEAD` with the branch's upstream. Keep the upstream set to the branch that you push.
+Rust changes also run Rustfmt before the commit.

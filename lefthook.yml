@@ -1,0 +1,17 @@
+min_version: 1.13.6
+
+pre-commit:
+  commands:
+    whitespace:
+      run: git diff --cached --check
+    rustfmt:
+      glob: "*.rs"
+      files: git diff --cached --name-only --diff-filter=ACMR
+      run: cargo fmt --manifest-path native/Cargo.toml -- --check
+
+pre-push:
+  commands:
+    verify:
+      files: git diff --name-only @{upstream} HEAD
+      glob: "*.{kt,kts,rs,toml}"
+      run: ./gradlew check
