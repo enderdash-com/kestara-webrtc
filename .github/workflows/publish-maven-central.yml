@@ -95,7 +95,7 @@ jobs:
           java-version: "25"
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.94.1
+        uses: dtolnay/rust-toolchain@1.100.0
 
       - name: Install Rust targets
         run: rustup target add ${{ matrix.target }}
@@ -239,7 +239,7 @@ jobs:
 
       - name: Install Rust
         if: inputs.native_publication == 'all' || inputs.native_publication == matrix.publication
-        uses: dtolnay/rust-toolchain@1.94.1
+        uses: dtolnay/rust-toolchain@1.100.0
         with:
           targets: ${{ matrix.rust_target }}
 
