@@ -71,7 +71,9 @@ public class PeerConnection internal constructor(
   public suspend fun createAndSetLocalDescription(type: SessionDescriptionType): SessionDescription {
     val description = when (type) {
       SessionDescriptionType.OFFER -> createOffer()
+
       SessionDescriptionType.ANSWER -> createAnswer()
+
       SessionDescriptionType.PRANSWER,
       SessionDescriptionType.ROLLBACK,
       -> throw UnsupportedOperationException("Automatic local description does not support $type")
@@ -105,8 +107,7 @@ public class PeerConnection internal constructor(
     return runtime.getStats(handle, timeout)
   }
 
-  public suspend fun selectedIceCandidatePair(): IceCandidatePairStats? =
-    getStats().transport.selectedCandidatePair
+  public suspend fun selectedIceCandidatePair(): IceCandidatePairStats? = getStats().transport.selectedCandidatePair
 
   public suspend fun createDataChannel(
     label: String,
@@ -161,18 +162,25 @@ public class PeerConnection internal constructor(
           sdpMLineIndex = event.number.takeIf { it >= 0 },
         ),
       )
+
       NativeEventKind.PEER_STATE -> mutableState.value = enumValue(event.number, "peer connection state")
+
       NativeEventKind.ICE_CONNECTION_STATE -> {
         mutableIceConnectionState.value = enumValue(event.number, "ICE connection state")
       }
+
       NativeEventKind.ICE_GATHERING_STATE -> {
         mutableIceGatheringState.value = enumValue(event.number, "ICE gathering state")
       }
+
       NativeEventKind.SIGNALING_STATE -> {
         mutableSignalingState.value = enumValue(event.number, "signaling state")
       }
+
       NativeEventKind.NEGOTIATION_NEEDED -> negotiationNeededChannel.send(Unit)
+
       NativeEventKind.DATA_CHANNEL -> registerRemoteDataChannel(event)
+
       NativeEventKind.DATA_CHANNEL_OPEN,
       NativeEventKind.DATA_CHANNEL_CLOSING,
       NativeEventKind.DATA_CHANNEL_CLOSED,
@@ -182,6 +190,7 @@ public class PeerConnection internal constructor(
       NativeEventKind.DATA_CHANNEL_BUFFERED_AMOUNT_LOW,
       NativeEventKind.DATA_CHANNEL_BUFFERED_AMOUNT_HIGH,
       -> routeDataChannelEvent(event)
+
       else -> throw WebRtcException("Unsupported peer event: ${event.kind}")
     }
   }
@@ -264,9 +273,8 @@ public class PeerConnection internal constructor(
     check(!closing.value && !closed.value) { "PeerConnection is closed" }
   }
 
-  private inline fun <reified T : Enum<T>> enumValue(ordinal: Int, name: String): T =
-    enumValues<T>().getOrNull(ordinal)
-      ?: throw WebRtcException("Unknown $name: $ordinal")
+  private inline fun <reified T : Enum<T>> enumValue(ordinal: Int, name: String): T = enumValues<T>().getOrNull(ordinal)
+    ?: throw WebRtcException("Unknown $name: $ordinal")
 
   private data class ChannelMetadata(
     val negotiated: Boolean,
@@ -277,11 +285,10 @@ public class PeerConnection internal constructor(
   private companion object {
     fun decodeChannelMetadata(data: ByteArray?): ChannelMetadata {
       require(data != null && data.size == 9) { "Invalid native DataChannel metadata" }
-      fun intAt(offset: Int): Int =
-        (data[offset].toInt() and 0xff) or
-          ((data[offset + 1].toInt() and 0xff) shl 8) or
-          ((data[offset + 2].toInt() and 0xff) shl 16) or
-          ((data[offset + 3].toInt() and 0xff) shl 24)
+      fun intAt(offset: Int): Int = (data[offset].toInt() and 0xff) or
+        ((data[offset + 1].toInt() and 0xff) shl 8) or
+        ((data[offset + 2].toInt() and 0xff) shl 16) or
+        ((data[offset + 3].toInt() and 0xff) shl 24)
       val lifetime = intAt(1)
       val retransmits = intAt(5)
       return ChannelMetadata(

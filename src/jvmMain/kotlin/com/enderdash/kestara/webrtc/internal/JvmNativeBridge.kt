@@ -27,11 +27,9 @@ private object JvmNativeBridge : NativeBridge {
     )
   }
 
-  override fun runtimeCertificateFingerprint(runtime: Long): String =
-    NativeBindings.nativeRuntimeCertificateFingerprint(runtime)
+  override fun runtimeCertificateFingerprint(runtime: Long): String = NativeBindings.nativeRuntimeCertificateFingerprint(runtime)
 
-  override fun runtimeCertificatePem(runtime: Long): String =
-    NativeBindings.nativeRuntimeCertificatePem(runtime)
+  override fun runtimeCertificatePem(runtime: Long): String = NativeBindings.nativeRuntimeCertificatePem(runtime)
 
   override fun submitCreatePeer(
     runtime: Long,
@@ -121,7 +119,11 @@ private object JvmNativeBridge : NativeBridge {
     timeout: Duration,
   ) {
     NativeBindings.nativeSubmitCreateDescription(
-      runtime, operation, peer, type.ordinal, timeout.inWholeMilliseconds,
+      runtime,
+      operation,
+      peer,
+      type.ordinal,
+      timeout.inWholeMilliseconds,
     )
   }
 
@@ -133,7 +135,12 @@ private object JvmNativeBridge : NativeBridge {
     timeout: Duration,
   ) {
     NativeBindings.nativeSubmitSetLocalDescription(
-      runtime, operation, peer, description.sdp, description.type.ordinal, timeout.inWholeMilliseconds,
+      runtime,
+      operation,
+      peer,
+      description.sdp,
+      description.type.ordinal,
+      timeout.inWholeMilliseconds,
     )
   }
 
@@ -145,7 +152,12 @@ private object JvmNativeBridge : NativeBridge {
     timeout: Duration,
   ) {
     NativeBindings.nativeSubmitSetRemoteDescription(
-      runtime, operation, peer, description.sdp, description.type.ordinal, timeout.inWholeMilliseconds,
+      runtime,
+      operation,
+      peer,
+      description.sdp,
+      description.type.ordinal,
+      timeout.inWholeMilliseconds,
     )
   }
 
@@ -201,11 +213,19 @@ private object JvmNativeBridge : NativeBridge {
   ) {
     if (trySend) {
       NativeBindings.nativeSubmitTrySendDataChannelText(
-        runtime, operation, channel, text, timeout.inWholeMilliseconds,
+        runtime,
+        operation,
+        channel,
+        text,
+        timeout.inWholeMilliseconds,
       )
     } else {
       NativeBindings.nativeSubmitSendDataChannelText(
-        runtime, operation, channel, text, timeout.inWholeMilliseconds,
+        runtime,
+        operation,
+        channel,
+        text,
+        timeout.inWholeMilliseconds,
       )
     }
   }
@@ -220,11 +240,19 @@ private object JvmNativeBridge : NativeBridge {
   ) {
     if (trySend) {
       NativeBindings.nativeSubmitTrySendDataChannelBinary(
-        runtime, operation, channel, data, timeout.inWholeMilliseconds,
+        runtime,
+        operation,
+        channel,
+        data,
+        timeout.inWholeMilliseconds,
       )
     } else {
       NativeBindings.nativeSubmitSendDataChannelBinary(
-        runtime, operation, channel, data, timeout.inWholeMilliseconds,
+        runtime,
+        operation,
+        channel,
+        data,
+        timeout.inWholeMilliseconds,
       )
     }
   }
@@ -236,7 +264,10 @@ private object JvmNativeBridge : NativeBridge {
     timeout: Duration,
   ) {
     NativeBindings.nativeSubmitDataChannelWritable(
-      runtime, operation, channel, timeout.inWholeMilliseconds,
+      runtime,
+      operation,
+      channel,
+      timeout.inWholeMilliseconds,
     )
   }
 
@@ -247,7 +278,10 @@ private object JvmNativeBridge : NativeBridge {
     timeout: Duration,
   ) {
     NativeBindings.nativeSubmitDataChannelOutstandingBytes(
-      runtime, operation, channel, timeout.inWholeMilliseconds,
+      runtime,
+      operation,
+      channel,
+      timeout.inWholeMilliseconds,
     )
   }
 
@@ -260,7 +294,12 @@ private object JvmNativeBridge : NativeBridge {
     timeout: Duration,
   ) {
     NativeBindings.nativeSubmitSetDataChannelThresholds(
-      runtime, operation, channel, low, high, timeout.inWholeMilliseconds,
+      runtime,
+      operation,
+      channel,
+      low,
+      high,
+      timeout.inWholeMilliseconds,
     )
   }
 
@@ -275,7 +314,10 @@ private object JvmNativeBridge : NativeBridge {
     timeout: Duration,
   ) {
     NativeBindings.nativeSubmitRotateCertificate(
-      runtime, operation, certificate?.pem.orEmpty(), timeout.inWholeMilliseconds,
+      runtime,
+      operation,
+      certificate?.pem.orEmpty(),
+      timeout.inWholeMilliseconds,
     )
   }
 

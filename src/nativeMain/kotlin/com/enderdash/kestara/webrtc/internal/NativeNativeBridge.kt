@@ -60,10 +60,9 @@ private object NativeNativeBridge : NativeBridge {
     output.value.toLong()
   }
 
-  override fun runtimeCertificateFingerprint(runtime: Long): String =
-    outputString { output, error ->
-      kestara_runtime_certificate_fingerprint(runtime.toULong(), output, error)
-    }
+  override fun runtimeCertificateFingerprint(runtime: Long): String = outputString { output, error ->
+    kestara_runtime_certificate_fingerprint(runtime.toULong(), output, error)
+  }
 
   override fun runtimeCertificatePem(runtime: Long): String = outputString { output, error ->
     kestara_runtime_certificate_pem(runtime.toULong(), output, error)
@@ -81,8 +80,7 @@ private object NativeNativeBridge : NativeBridge {
     configuration = NativeWire.peer(configuration),
   )
 
-  override fun submitRestartIce(runtime: Long, operation: Long, peer: Long, timeout: Duration) =
-    submit(runtime, operation, RESTART_ICE, peer, timeout)
+  override fun submitRestartIce(runtime: Long, operation: Long, peer: Long, timeout: Duration) = submit(runtime, operation, RESTART_ICE, peer, timeout)
 
   override fun submitSetConfiguration(
     runtime: Long,
@@ -91,7 +89,11 @@ private object NativeNativeBridge : NativeBridge {
     configuration: PeerConnectionConfiguration,
     timeout: Duration,
   ) = submit(
-    runtime, operation, SET_CONFIGURATION, peer, timeout,
+    runtime,
+    operation,
+    SET_CONFIGURATION,
+    peer,
+    timeout,
     configuration = NativeWire.peer(configuration),
   )
 
@@ -110,7 +112,11 @@ private object NativeNativeBridge : NativeBridge {
     description: SessionDescription,
     timeout: Duration,
   ) = submit(
-    runtime, operation, SET_LOCAL_DESCRIPTION, peer, timeout,
+    runtime,
+    operation,
+    SET_LOCAL_DESCRIPTION,
+    peer,
+    timeout,
     text = description.sdp,
     number = description.type.ordinal.toLong(),
   )
@@ -122,7 +128,11 @@ private object NativeNativeBridge : NativeBridge {
     description: SessionDescription,
     timeout: Duration,
   ) = submit(
-    runtime, operation, SET_REMOTE_DESCRIPTION, peer, timeout,
+    runtime,
+    operation,
+    SET_REMOTE_DESCRIPTION,
+    peer,
+    timeout,
     text = description.sdp,
     number = description.type.ordinal.toLong(),
   )
@@ -136,7 +146,11 @@ private object NativeNativeBridge : NativeBridge {
     sdpMLineIndex: Int?,
     timeout: Duration,
   ) = submit(
-    runtime, operation, ADD_ICE_CANDIDATE, peer, timeout,
+    runtime,
+    operation,
+    ADD_ICE_CANDIDATE,
+    peer,
+    timeout,
     text = candidate,
     secondaryText = sdpMid,
     number = (sdpMLineIndex ?: -1).toLong(),
@@ -150,7 +164,11 @@ private object NativeNativeBridge : NativeBridge {
     options: DataChannelOptions,
     timeout: Duration,
   ) = submit(
-    runtime, operation, CREATE_DATA_CHANNEL, peer, timeout,
+    runtime,
+    operation,
+    CREATE_DATA_CHANNEL,
+    peer,
+    timeout,
     text = label,
     configuration = NativeWire.dataChannel(options),
   )
@@ -163,7 +181,12 @@ private object NativeNativeBridge : NativeBridge {
     timeout: Duration,
     trySend: Boolean,
   ) = submit(
-    runtime, operation, if (trySend) TRY_SEND_TEXT else SEND_TEXT, channel, timeout, text = text,
+    runtime,
+    operation,
+    if (trySend) TRY_SEND_TEXT else SEND_TEXT,
+    channel,
+    timeout,
+    text = text,
   )
 
   override fun submitSendBinary(
@@ -174,7 +197,12 @@ private object NativeNativeBridge : NativeBridge {
     timeout: Duration,
     trySend: Boolean,
   ) = submit(
-    runtime, operation, if (trySend) TRY_SEND_BINARY else SEND_BINARY, channel, timeout, data = data,
+    runtime,
+    operation,
+    if (trySend) TRY_SEND_BINARY else SEND_BINARY,
+    channel,
+    timeout,
+    data = data,
   )
 
   override fun submitDataChannelWritable(
@@ -199,13 +227,16 @@ private object NativeNativeBridge : NativeBridge {
     high: Long,
     timeout: Duration,
   ) = submit(
-    runtime, operation, SET_DATA_CHANNEL_THRESHOLDS, channel, timeout,
+    runtime,
+    operation,
+    SET_DATA_CHANNEL_THRESHOLDS,
+    channel,
+    timeout,
     number = low,
     secondaryNumber = high,
   )
 
-  override fun submitGetStats(runtime: Long, operation: Long, peer: Long, timeout: Duration) =
-    submit(runtime, operation, GET_STATS, peer, timeout)
+  override fun submitGetStats(runtime: Long, operation: Long, peer: Long, timeout: Duration) = submit(runtime, operation, GET_STATS, peer, timeout)
 
   override fun submitRotateCertificate(
     runtime: Long,
@@ -221,11 +252,9 @@ private object NativeNativeBridge : NativeBridge {
     timeout: Duration,
   ) = submit(runtime, operation, CLOSE_DATA_CHANNEL, channel, timeout)
 
-  override fun submitClosePeer(runtime: Long, operation: Long, peer: Long, timeout: Duration) =
-    submit(runtime, operation, CLOSE_PEER, peer, timeout)
+  override fun submitClosePeer(runtime: Long, operation: Long, peer: Long, timeout: Duration) = submit(runtime, operation, CLOSE_PEER, peer, timeout)
 
-  override fun submitCloseRuntime(runtime: Long, operation: Long, timeout: Duration) =
-    submit(runtime, operation, CLOSE_RUNTIME, timeout = timeout)
+  override fun submitCloseRuntime(runtime: Long, operation: Long, timeout: Duration) = submit(runtime, operation, CLOSE_RUNTIME, timeout = timeout)
 
   override fun pollRuntimeEvent(runtime: Long, timeout: Duration): NativeEvent? = memScoped {
     val output = emptyOutput()
@@ -329,8 +358,7 @@ private object NativeNativeBridge : NativeBridge {
     return copy
   }
 
-  private fun ownedBytes(value: kotlinx.cinterop.CValue<kestara_bytes>): ByteArray =
-    value.useContents { takeOwnedBytes(this) }
+  private fun ownedBytes(value: kotlinx.cinterop.CValue<kestara_bytes>): ByteArray = value.useContents { takeOwnedBytes(this) }
 
   private const val CREATE_PEER = 1
   private const val RESTART_ICE = 2

@@ -43,14 +43,26 @@ internal object NativeLibraryLoader {
         }
         return when {
           osName.startsWith("windows") -> Platform(
-            "windows", architecture, "kestara_webrtc_native.dll", osName,
+            "windows",
+            architecture,
+            "kestara_webrtc_native.dll",
+            osName,
           )
+
           osName.startsWith("mac") -> Platform(
-            "macos", architecture, "libkestara_webrtc_native.dylib", osName,
+            "macos",
+            architecture,
+            "libkestara_webrtc_native.dylib",
+            osName,
           )
+
           osName.startsWith("linux") -> Platform(
-            "linux", architecture, "libkestara_webrtc_native.so", osName,
+            "linux",
+            architecture,
+            "libkestara_webrtc_native.so",
+            osName,
           )
+
           else -> throw UnsupportedOperationException("Unsupported operating system: $osName")
         }
       }

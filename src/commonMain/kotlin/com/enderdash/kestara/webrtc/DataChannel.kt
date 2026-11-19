@@ -102,26 +102,34 @@ public class DataChannel internal constructor(
   internal suspend fun handleNativeEvent(event: NativeEvent) {
     when (event.kind) {
       NativeEventKind.DATA_CHANNEL_OPEN -> notifyOpen()
+
       NativeEventKind.DATA_CHANNEL_CLOSING -> {
         mutableState.value = DataChannelState.CLOSING
         eventChannel.send(DataChannelEvent.Closing)
       }
+
       NativeEventKind.DATA_CHANNEL_CLOSED -> markClosed(runtimeShutdown = false)
+
       NativeEventKind.DATA_CHANNEL_ERROR -> eventChannel.send(
         DataChannelEvent.Error(event.text ?: "DataChannel error"),
       )
+
       NativeEventKind.DATA_CHANNEL_TEXT -> messageChannel.send(
         DataChannelMessage.Text(event.text.orEmpty()),
       )
+
       NativeEventKind.DATA_CHANNEL_BINARY -> messageChannel.send(
         DataChannelMessage.Binary(event.data ?: ByteArray(0)),
       )
+
       NativeEventKind.DATA_CHANNEL_BUFFERED_AMOUNT_LOW -> {
         eventChannel.send(DataChannelEvent.BufferedAmountLow)
       }
+
       NativeEventKind.DATA_CHANNEL_BUFFERED_AMOUNT_HIGH -> {
         eventChannel.send(DataChannelEvent.BufferedAmountHigh)
       }
+
       else -> throw WebRtcException("Unsupported DataChannel event: ${event.kind}")
     }
   }

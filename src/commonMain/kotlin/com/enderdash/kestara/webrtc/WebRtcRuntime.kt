@@ -189,10 +189,9 @@ public class WebRtcRuntime private constructor(
     }
   }
 
-  internal suspend fun outstandingBytes(channel: Long, timeout: Duration): Long =
-    submit(timeout) { operation ->
-      bridge.submitDataChannelOutstandingBytes(handle, operation, channel, timeout)
-    }.text?.toULongOrNull()?.toLong() ?: 0
+  internal suspend fun outstandingBytes(channel: Long, timeout: Duration): Long = submit(timeout) { operation ->
+    bridge.submitDataChannelOutstandingBytes(handle, operation, channel, timeout)
+  }.text?.toULongOrNull()?.toLong() ?: 0
 
   internal suspend fun setDataChannelThresholds(
     channel: Long,
@@ -302,8 +301,11 @@ public class WebRtcRuntime private constructor(
     val releaseFailure = runCatching { bridge.releaseRuntime(handle) }.exceptionOrNull()
     scope.cancel()
     val finalFailure = failure ?: releaseFailure
-    if (finalFailure == null) closeCompletion.complete(Unit)
-    else closeCompletion.completeExceptionally(finalFailure)
+    if (finalFailure == null) {
+      closeCompletion.complete(Unit)
+    } else {
+      closeCompletion.completeExceptionally(finalFailure)
+    }
   }
 
   internal data class ChannelRegistration(val handle: Long, val id: Int)

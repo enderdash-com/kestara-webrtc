@@ -31,7 +31,9 @@ internal object NativeBindings {
   ): Long
 
   @JvmStatic external fun nativeRuntimeCertificateFingerprint(runtime: Long): String
+
   @JvmStatic external fun nativeRuntimeCertificatePem(runtime: Long): String
+
   @JvmStatic external fun nativeSubmitCreatePeer(
     runtime: Long,
     operation: Long,
@@ -76,12 +78,14 @@ internal object NativeBindings {
     receiveMtu: Int,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitRestartIce(
     runtime: Long,
     operation: Long,
     peer: Long,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitSetConfiguration(
     runtime: Long,
     operation: Long,
@@ -92,6 +96,7 @@ internal object NativeBindings {
     iceTransportPolicy: Int,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitCreateDescription(
     runtime: Long,
     operation: Long,
@@ -99,6 +104,7 @@ internal object NativeBindings {
     type: Int,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitSetLocalDescription(
     runtime: Long,
     operation: Long,
@@ -107,6 +113,7 @@ internal object NativeBindings {
     type: Int,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitSetRemoteDescription(
     runtime: Long,
     operation: Long,
@@ -115,6 +122,7 @@ internal object NativeBindings {
     type: Int,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitAddIceCandidate(
     runtime: Long,
     operation: Long,
@@ -124,6 +132,7 @@ internal object NativeBindings {
     sdpMLineIndex: Int,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitCreateDataChannel(
     runtime: Long,
     operation: Long,
@@ -136,6 +145,7 @@ internal object NativeBindings {
     negotiatedId: Int,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitSendDataChannelText(
     runtime: Long,
     operation: Long,
@@ -143,6 +153,7 @@ internal object NativeBindings {
     text: String,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitSendDataChannelBinary(
     runtime: Long,
     operation: Long,
@@ -150,6 +161,7 @@ internal object NativeBindings {
     data: ByteArray,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitTrySendDataChannelText(
     runtime: Long,
     operation: Long,
@@ -157,6 +169,7 @@ internal object NativeBindings {
     text: String,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitTrySendDataChannelBinary(
     runtime: Long,
     operation: Long,
@@ -164,19 +177,23 @@ internal object NativeBindings {
     data: ByteArray,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeReleaseBuffer(runtime: Long, buffer: Long)
+
   @JvmStatic external fun nativeSubmitDataChannelWritable(
     runtime: Long,
     operation: Long,
     channel: Long,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitDataChannelOutstandingBytes(
     runtime: Long,
     operation: Long,
     channel: Long,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitSetDataChannelThresholds(
     runtime: Long,
     operation: Long,
@@ -185,38 +202,48 @@ internal object NativeBindings {
     high: Long,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitGetStats(
     runtime: Long,
     operation: Long,
     peer: Long,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitRotateCertificate(
     runtime: Long,
     operation: Long,
     certificatePem: String,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitCloseDataChannel(
     runtime: Long,
     operation: Long,
     channel: Long,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitClosePeer(
     runtime: Long,
     operation: Long,
     peer: Long,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativeSubmitCloseRuntime(
     runtime: Long,
     operation: Long,
     timeoutMillis: Long,
   )
+
   @JvmStatic external fun nativePollRuntimeEvent(runtime: Long, timeoutMillis: Long): JvmNativeEvent?
+
   @JvmStatic external fun nativeWakeRuntime(runtime: Long)
+
   @JvmStatic external fun nativeReleaseRuntime(runtime: Long)
+
   @JvmStatic external fun nativeAbiVersion(): Int
+
   @JvmStatic external fun nativeLibraryVersion(): String
 }
