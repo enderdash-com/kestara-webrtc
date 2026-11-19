@@ -29,3 +29,7 @@ pre-push:
       files: git diff --name-only @{upstream} HEAD
       glob: "*.{kt,kts,rs,toml}"
       run: ./gradlew check
+    cargo-deny:
+      files: git diff --name-only @{upstream} HEAD
+      glob: "{native/Cargo.toml,native/Cargo.lock,deny.toml}"
+      run: cargo deny --manifest-path native/Cargo.toml --locked check

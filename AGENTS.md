@@ -17,6 +17,7 @@
 - Before committing, Lefthook checks staged whitespace. Staged Kotlin or Gradle Kotlin DSL changes trigger `./gradlew spotlessCheck`. Staged Rust changes trigger Rustfmt.
 - The commit-message hook checks the first line of each commit message. It accepts Conventional Commits and Git's merge, revert, fixup, squash, and amend subjects.
 - Before pushing Kotlin, Rust, or TOML changes, Lefthook runs `./gradlew check`, as CI does.
+- Before pushing changes to the Rust manifest, lockfile, or `deny.toml`, Lefthook runs `cargo deny --manifest-path native/Cargo.toml --locked check`.
 - To format Kotlin code and Gradle Kotlin DSL scripts, run `./gradlew spotlessApply`.
 
 ## Commits

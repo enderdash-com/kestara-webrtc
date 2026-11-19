@@ -61,4 +61,6 @@ To format Kotlin files, run `./gradlew spotlessApply`.
 The commit-message hook checks the first line for Conventional Commits and accepts Git's merge, revert, fixup, squash, and amend subjects.
 
 Before pushing source or build-script changes, the hook runs `./gradlew check`.
+Install cargo-deny 0.20.2 for the pre-push check on changes to `native/Cargo.toml`, `native/Cargo.lock`, or `deny.toml`.
+Run `cargo deny --manifest-path native/Cargo.toml --locked check` from the repository root to check Rust dependencies.
 The pre-push hook compares `HEAD` with the branch's upstream. Keep the upstream set to the branch that you push.
