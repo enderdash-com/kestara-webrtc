@@ -1,3 +1,5 @@
+#![warn(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
+
 use std::net::IpAddr;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::ptr;
@@ -616,10 +618,11 @@ fn encode_event(mut event: NativeEvent) -> Vec<u8> {
 
 fn encode_optional(output: &mut Vec<u8>, value: Option<Vec<u8>>) {
     match value {
-        Some(value) => {
+        Some(mut value) => {
             let length = i32::try_from(value.len()).unwrap_or(i32::MAX);
             output.extend_from_slice(&length.to_le_bytes());
-            output.extend_from_slice(&value[..usize::try_from(length).unwrap_or(0)]);
+            value.truncate(usize::try_from(length).unwrap_or(0));
+            output.extend_from_slice(&value);
         }
         None => output.extend_from_slice(&(-1_i32).to_le_bytes()),
     }
@@ -687,7 +690,25 @@ fn input<'a>(value: *const u8, length: usize) -> Result<&'a [u8], String> {
     if value.is_null() {
         return Err("A native input pointer is null".to_owned());
     }
+    if length > isize::MAX as usize {
+        return Err("A native input length exceeds isize::MAX".to_owned());
+    }
     // SAFETY: The caller supplies one readable allocation of length bytes that remains live and
-    // unmodified for the borrow. Its size is at most isize::MAX bytes.
+    // unmodified for the borrow. The length check enforces the slice size limit.
     Ok(unsafe { slice::from_raw_parts(value, length) })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::input;
+
+    #[test]
+    fn rejects_input_length_above_slice_limit() {
+        let byte = 0_u8;
+        assert_eq!(
+            input(&raw const byte, usize::MAX),
+            Err("A native input length exceeds isize::MAX".to_owned()),
+            "Reject an oversized length before constructing a slice"
+        );
+    }
 }

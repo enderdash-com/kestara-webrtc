@@ -1,3 +1,12 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+
+disallowed-methods = [
+    { path = "std::env::set_var", reason = "Pass configuration explicitly instead of mutating the process environment while threads may be running." },
+    { path = "std::env::remove_var", reason = "Pass configuration explicitly instead of mutating the process environment while threads may be running." },
+    { path = "std::thread::sleep", reason = "Use tokio::time::sleep to suspend the task without blocking a runtime worker." },
+    { path = "std::process::Command::output", reason = "Use tokio::process::Command with Tokio's process feature to collect output without blocking a runtime worker." },
+    { path = "std::process::Command::status", reason = "Use tokio::process::Command with Tokio's process feature to wait without blocking a runtime worker." },
+    { path = "std::process::Command::spawn", reason = "Use tokio::process::Command with Tokio's process feature for asynchronous child process handling." },
+]

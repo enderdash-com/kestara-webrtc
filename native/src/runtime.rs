@@ -580,6 +580,7 @@ fn generate_certificate() -> Result<RTCCertificate, String> {
         .map_err(|error| format!("Failed to generate the runtime DTLS certificate: {error}"))
 }
 
+#[warn(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 fn import_certificate(pem: &str) -> Result<RTCCertificate, String> {
     RTCCertificate::from_pem(pem)
         .map_err(|error| format!("Failed to import the runtime DTLS certificate: {error}"))
@@ -632,6 +633,7 @@ fn create_socket_mux(
     ))
 }
 
+#[warn(clippy::indexing_slicing, clippy::arithmetic_side_effects)]
 fn socket_addresses(hosts: &[String], port: u16) -> Result<Vec<SocketAddr>, String> {
     hosts
         .iter()
