@@ -28,5 +28,16 @@ webrtc = { git = "https://github.com/enderdash-com/webrtc.git", rev = "18bf3d45c
 unsafe_op_in_unsafe_fn = "deny"
 
 [lints.clippy]
-all = "deny"
-pedantic = "deny"
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
+dbg_macro = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+map_err_ignore = "warn"
+unused_result_ok = "warn"
+redundant_clone = "warn"

@@ -366,7 +366,7 @@ pub fn release_buffer(runtime_handle: u64, buffer_handle: u64) -> Result<(), Str
     controller
         .buffers
         .lock()
-        .map_err(|_| "The native buffer registry is poisoned".to_owned())?
+        .map_err(|error| format!("The native buffer registry is poisoned: {error}"))?
         .remove(&buffer_handle);
     Ok(())
 }
@@ -383,7 +383,7 @@ fn register_buffer(
     controller
         .buffers
         .lock()
-        .map_err(|_| "The native buffer registry is poisoned".to_owned())?
+        .map_err(|error| format!("The native buffer registry is poisoned: {error}"))?
         .insert(
             handle,
             NativeBufferEntry {
@@ -403,7 +403,7 @@ pub fn submit(runtime_handle: u64, command: Command) -> Result<(), String> {
     controller
         .commands
         .send(command)
-        .map_err(|_| "The WebRTC runtime is shutting down".to_owned())
+        .map_err(|error| format!("The WebRTC runtime is shutting down: {error}"))
 }
 
 pub fn complete_error(
@@ -415,7 +415,7 @@ pub fn complete_error(
     controller
         .event_sender
         .send(NativeEvent::operation(operation_handle, Err(error)))
-        .map_err(|_| "The WebRTC runtime event queue is closed".to_owned())
+        .map_err(|error| format!("The WebRTC runtime event queue is closed: {error}"))
 }
 
 pub fn poll(runtime_handle: u64, timeout: Duration) -> Result<Option<NativeEvent>, String> {
@@ -441,12 +441,17 @@ pub fn release(runtime_handle: u64) -> Result<(), String> {
     let thread = controller
         .thread
         .lock()
-        .map_err(|_| "The WebRTC runtime thread lock is poisoned".to_owned())?
+        .map_err(|error| format!("The WebRTC runtime thread lock is poisoned: {error}"))?
         .take();
     if let Some(thread) = thread {
-        thread
-            .join()
-            .map_err(|_| "The WebRTC runtime controller panicked during shutdown".to_owned())?;
+        thread.join().map_err(|payload| {
+            let message = payload
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| payload.downcast_ref::<&str>().copied())
+                .unwrap_or("no string panic message");
+            format!("The WebRTC runtime controller panicked during shutdown: {message}")
+        })?;
     }
     Ok(())
 }
@@ -462,7 +467,7 @@ fn lock_runtimes()
 -> Result<std::sync::MutexGuard<'static, HashMap<u64, Arc<RuntimeController>>>, String> {
     RUNTIMES
         .lock()
-        .map_err(|_| "The WebRTC runtime registry is poisoned".to_owned())
+        .map_err(|error| format!("The WebRTC runtime registry is poisoned: {error}"))
 }
 
 fn run_runtime(
@@ -523,7 +528,7 @@ fn run_runtime(
                     state.shutdown_all().await
                 })
                 .await
-                .map_err(|_| "WebRTC runtime shutdown timed out".to_owned())?
+                .map_err(|error| format!("WebRTC runtime shutdown timed out: {error}"))?
             });
             if result.is_err() {
                 for operation in operations {
@@ -580,7 +585,7 @@ fn lock_certificate(
 ) -> Result<std::sync::MutexGuard<'_, RTCCertificate>, String> {
     certificate
         .lock()
-        .map_err(|_| "The runtime DTLS certificate lock is poisoned".to_owned())
+        .map_err(|error| format!("The runtime DTLS certificate lock is poisoned: {error}"))
 }
 
 fn create_socket_mux(
@@ -633,13 +638,16 @@ fn dispatch(runtime: &Runtime, state: Arc<RuntimeState>, command: Command) -> Jo
             execute(Arc::clone(&state), command),
         ))
         .await
-        .map_err(|_| "WebRTC operation timed out".to_owned())
+        .map_err(|error| format!("WebRTC operation timed out: {error}"))
         .and_then(|result| result);
         state.send_event(NativeEvent::operation(operation_handle, result));
     })
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "A single match keeps command execution and result construction together"
+)]
 async fn execute(state: Arc<RuntimeState>, command: Command) -> Result<OperationValue, String> {
     match command {
         Command::CreatePeer { configuration, .. } => {
@@ -796,11 +804,9 @@ async fn execute(state: Arc<RuntimeState>, command: Command) -> Result<Operation
                 None => generate_certificate()?,
             };
             let fingerprint = certificate_fingerprint_value(&certificate)?;
-            *state
-                .certificate
-                .lock()
-                .map_err(|_| "The runtime DTLS certificate lock is poisoned".to_owned())? =
-                certificate;
+            *state.certificate.lock().map_err(|error| {
+                format!("The runtime DTLS certificate lock is poisoned: {error}")
+            })? = certificate;
             Ok(OperationValue {
                 text: Some(fingerprint),
                 ..OperationValue::default()

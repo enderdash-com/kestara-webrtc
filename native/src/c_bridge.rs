@@ -103,7 +103,10 @@ struct CredentialsDto {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[allow(clippy::struct_excessive_bools)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "The wire format carries independent boolean peer options"
+)]
 struct PeerDto {
     ice_servers: Vec<IceServerDto>,
     min_port: i32,
@@ -216,7 +219,10 @@ pub extern "C" fn kestara_runtime_certificate_pem(
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "C ABI command decoding stays in one match"
+)]
 pub extern "C" fn kestara_runtime_submit(
     runtime_handle: u64,
     operation_handle: u64,
@@ -278,7 +284,7 @@ pub extern "C" fn kestara_runtime_submit(
                 let description = parse_description(
                     required(text, "session description")?,
                     i32::try_from(number)
-                        .map_err(|_| "Invalid session description type".to_owned())?,
+                        .map_err(|error| format!("Invalid session description type: {error}"))?,
                 );
                 let description = match description {
                     Ok(description) => description,
@@ -310,7 +316,8 @@ pub extern "C" fn kestara_runtime_submit(
                     candidate: required(text, "ICE candidate")?,
                     sdp_mid: secondary_text,
                     sdp_mline_index: optional_u16(
-                        i32::try_from(number).map_err(|_| "Invalid SDP m-line index".to_owned())?,
+                        i32::try_from(number)
+                            .map_err(|error| format!("Invalid SDP m-line index: {error}"))?,
                         "SDP m-line index",
                     )?,
                     username_fragment: None,
@@ -382,9 +389,9 @@ pub extern "C" fn kestara_runtime_submit(
                 timeout,
                 channel_handle: target_handle,
                 low: u32::try_from(number)
-                    .map_err(|_| "Invalid low buffered amount threshold".to_owned())?,
+                    .map_err(|error| format!("Invalid low buffered amount threshold: {error}"))?,
                 high: u32::try_from(secondary_number)
-                    .map_err(|_| "Invalid high buffered amount threshold".to_owned())?,
+                    .map_err(|error| format!("Invalid high buffered amount threshold: {error}"))?,
             },
             GET_STATS => Command::GetStats {
                 operation_handle,
@@ -458,7 +465,10 @@ pub extern "C" fn kestara_bytes_free(bytes: KestaraBytes) {
     unsafe { drop(Box::from_raw(pointer)) };
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "Peer option decoding and validation follow the wire format in one place"
+)]
 fn peer_configuration(value: PeerDto) -> Result<PeerConfiguration, String> {
     let min_port = port(value.min_port, "minimum")?;
     let max_port = port(value.max_port, "maximum")?;

@@ -154,7 +154,7 @@ impl RuntimeState {
     fn lock_certificate(&self) -> Result<std::sync::MutexGuard<'_, RTCCertificate>, String> {
         self.certificate
             .lock()
-            .map_err(|_| "The runtime DTLS certificate lock is poisoned".to_owned())
+            .map_err(|error| format!("The runtime DTLS certificate lock is poisoned: {error}"))
     }
 
     pub async fn create_peer(
@@ -376,9 +376,7 @@ impl RuntimeState {
         let (channel, peer_handle) = self.get_channel(channel_handle)?;
         let peer = self.get_peer(peer_handle)?;
         let _operation = peer.operations.lock().await;
-        let data = Bytes::from(data)
-            .try_into_mut()
-            .expect("a newly created Bytes value is uniquely owned");
+        let data = Bytes::from(data).into();
         channel
             .send(data)
             .await
@@ -400,9 +398,7 @@ impl RuntimeState {
         data: Vec<u8>,
     ) -> Result<bool, String> {
         let (channel, _) = self.get_channel(channel_handle)?;
-        let data = Bytes::from(data)
-            .try_into_mut()
-            .expect("a newly created Bytes value is uniquely owned");
+        let data = Bytes::from(data).into();
         match channel.try_send(data).await {
             Ok(()) => Ok(true),
             Err(Error::ErrSendBufferFull) => Ok(false),
@@ -590,7 +586,7 @@ impl RuntimeState {
     fn lock_registry(&self) -> Result<std::sync::MutexGuard<'_, Registry>, String> {
         self.registry
             .lock()
-            .map_err(|_| "Kestara WebRTC handle registry is poisoned".to_owned())
+            .map_err(|error| format!("Kestara WebRTC handle registry is poisoned: {error}"))
     }
 
     fn next_handle(&self) -> u64 {
@@ -932,7 +928,7 @@ fn encode_stats(report: &RTCStatsReport) -> Result<Vec<u8>, String> {
     write_u32(
         &mut output,
         u32::try_from(channels.len())
-            .map_err(|_| "Too many DataChannel stats entries".to_owned())?,
+            .map_err(|error| format!("Too many DataChannel stats entries: {error}"))?,
     );
     for channel in channels {
         output.extend_from_slice(&channel.data_channel_identifier.to_be_bytes());
@@ -994,8 +990,8 @@ fn write_candidate(output: &mut Vec<u8>, candidate: &RTCIceCandidateStats) -> Re
 }
 
 fn write_string(output: &mut Vec<u8>, value: &str) -> Result<(), String> {
-    let size =
-        u32::try_from(value.len()).map_err(|_| "Native stats string is too large".to_owned())?;
+    let size = u32::try_from(value.len())
+        .map_err(|error| format!("Native stats string is too large: {error}"))?;
     write_u32(output, size);
     output.extend_from_slice(value.as_bytes());
     Ok(())

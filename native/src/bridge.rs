@@ -98,10 +98,12 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
             let shared_udp_addresses = read_string_array(env, &shared_udp_addresses)?;
             let shared_tcp_addresses = read_string_array(env, &shared_tcp_addresses)?;
             let result = (|| {
-                let worker_threads = usize::try_from(worker_threads)
-                    .map_err(|_| "The worker thread count must not be negative".to_owned())?;
-                let reactor_threads = usize::try_from(reactor_threads)
-                    .map_err(|_| "The reactor thread count must not be negative".to_owned())?;
+                let worker_threads = usize::try_from(worker_threads).map_err(|error| {
+                    format!("The worker thread count must not be negative: {error}")
+                })?;
+                let reactor_threads = usize::try_from(reactor_threads).map_err(|error| {
+                    format!("The reactor thread count must not be negative: {error}")
+                })?;
                 let shared_min_port = port(shared_min_port, "shared minimum")?;
                 let shared_max_port = port(shared_max_port, "shared maximum")?;
                 if (shared_min_port == 0) != (shared_max_port == 0)
@@ -126,7 +128,10 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
 }
 
 #[unsafe(no_mangle)]
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "JNI peer option validation stays together"
+)]
 pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings_nativeSubmitCreatePeer(
     mut unowned_env: EnvUnowned<'_>,
     _class: JClass<'_>,
@@ -221,8 +226,8 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                 let sctp_maximum_message_size =
                     positive_u32(sctp_maximum_message_size, "SCTP maximum message size")?;
                 let receive_queue_capacity = usize::try_from(data_channel_receive_queue_capacity)
-                    .map_err(|_| {
-                    "DataChannel receive queue capacity must be positive".to_owned()
+                    .map_err(|error| {
+                    format!("DataChannel receive queue capacity must be positive: {error}")
                 })?;
                 if receive_queue_capacity == 0 {
                     return Err("DataChannel receive queue capacity must be positive".to_owned());
@@ -245,12 +250,14 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                     _ => return Err("Invalid DTLS answering role".to_owned()),
                 };
                 let replay_protection_window = usize::try_from(dtls_replay_protection_window)
-                    .map_err(|_| "DTLS replay protection window must be positive".to_owned())?;
+                    .map_err(|error| {
+                        format!("DTLS replay protection window must be positive: {error}")
+                    })?;
                 if replay_protection_window == 0 {
                     return Err("DTLS replay protection window must be positive".to_owned());
                 }
                 let receive_mtu = usize::try_from(receive_mtu)
-                    .map_err(|_| "Receive MTU must not be negative".to_owned())?;
+                    .map_err(|error| format!("Receive MTU must not be negative: {error}"))?;
                 let mdns_local_address = if mdns_local_address.is_empty() {
                     None
                 } else {
@@ -352,8 +359,10 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                             },
                             sctp: SctpConfiguration {
                                 send_buffer_limit: usize::try_from(sctp_send_buffer_limit)
-                                    .map_err(|_| {
-                                        "SCTP send buffer limit must not be negative".to_owned()
+                                    .map_err(|error| {
+                                        format!(
+                                            "SCTP send buffer limit must not be negative: {error}"
+                                        )
                                     })?,
                                 receive_buffer_size: sctp_receive_buffer_size,
                                 maximum_message_size: sctp_maximum_message_size,
@@ -823,10 +832,11 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
     unowned_env
         .with_env(|env| -> jni::errors::Result<()> {
             let result = (|| {
-                let low = u32::try_from(low)
-                    .map_err(|_| "Low buffered amount threshold must not be negative".to_owned())?;
-                let high = u32::try_from(high).map_err(|_| {
-                    "High buffered amount threshold must not be negative".to_owned()
+                let low = u32::try_from(low).map_err(|error| {
+                    format!("Low buffered amount threshold must not be negative: {error}")
+                })?;
+                let high = u32::try_from(high).map_err(|error| {
+                    format!("High buffered amount threshold must not be negative: {error}")
                 })?;
                 if low > high {
                     return Err("Low buffered amount threshold must not exceed high".to_owned());
@@ -1061,7 +1071,10 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
         .resolve::<ThrowRuntimeExAndDefault>();
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The helper shares the native session-description arguments between JNI entry points"
+)]
 fn submit_description(
     unowned_env: &mut EnvUnowned<'_>,
     runtime_handle: jlong,
@@ -1201,8 +1214,8 @@ pub(crate) fn parse_description(
 }
 
 pub(crate) fn timeout(millis: jlong) -> Result<Duration, String> {
-    let millis =
-        u64::try_from(millis).map_err(|_| "Operation timeout must not be negative".to_owned())?;
+    let millis = u64::try_from(millis)
+        .map_err(|error| format!("Operation timeout must not be negative: {error}"))?;
     Ok(Duration::from_millis(millis))
 }
 
@@ -1213,12 +1226,13 @@ pub(crate) fn optional_duration(millis: jlong, name: &str) -> Result<Option<Dura
         u64::try_from(millis)
             .map(Duration::from_millis)
             .map(Some)
-            .map_err(|_| format!("The {name} must not be negative"))
+            .map_err(|error| format!("The {name} must not be negative: {error}"))
     }
 }
 
 pub(crate) fn positive_u32(value: jint, name: &str) -> Result<u32, String> {
-    let value = u32::try_from(value).map_err(|_| format!("The {name} must be positive"))?;
+    let value =
+        u32::try_from(value).map_err(|error| format!("The {name} must be positive: {error}"))?;
     if value == 0 {
         Err(format!("The {name} must be positive"))
     } else {
@@ -1268,7 +1282,8 @@ pub(crate) fn cipher_suites(mask: jint) -> Result<Vec<CipherSuiteId>, String> {
 }
 
 pub(crate) fn port(value: jint, name: &str) -> Result<u16, String> {
-    u16::try_from(value).map_err(|_| format!("The {name} port must be between 0 and 65535"))
+    u16::try_from(value)
+        .map_err(|error| format!("The {name} port must be between 0 and 65535: {error}"))
 }
 
 pub(crate) fn optional_u16(value: jint, name: &str) -> Result<Option<u16>, String> {
@@ -1277,14 +1292,14 @@ pub(crate) fn optional_u16(value: jint, name: &str) -> Result<Option<u16>, Strin
     } else {
         u16::try_from(value)
             .map(Some)
-            .map_err(|_| format!("The {name} must be between 0 and 65535"))
+            .map_err(|error| format!("The {name} must be between 0 and 65535: {error}"))
     }
 }
 
 fn handle_from_jlong(value: jlong) -> Result<u64, String> {
-    u64::try_from(value).map_err(|_| "Native handle must not be negative".to_owned())
+    u64::try_from(value).map_err(|error| format!("Native handle must not be negative: {error}"))
 }
 
 fn handle_to_jlong(value: u64) -> Result<jlong, String> {
-    jlong::try_from(value).map_err(|_| "Native handle range is exhausted".to_owned())
+    jlong::try_from(value).map_err(|error| format!("Native handle range is exhausted: {error}"))
 }
