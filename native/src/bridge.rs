@@ -1013,7 +1013,8 @@ pub extern "system" fn Java_com_enderdash_kestara_webrtc_internal_NativeBindings
                 )?;
                 message_handle = handle_to_jlong(view.handle).unwrap_or_default();
                 if event.kind == crate::events::DATA_CHANNEL_BINARY {
-                    // The runtime registry owns the allocation until Java closes the message.
+                    // SAFETY: The view points to the registered allocation for its full length.
+                    // The JVM bridge copies the bytes before releasing the registered buffer.
                     let buffer = unsafe { env.new_direct_byte_buffer(view.address, view.length)? };
                     direct_data = JObject::from(buffer);
                 }

@@ -191,6 +191,7 @@ pub extern "C" fn kestara_runtime_create(
             shared_min_port: min_port,
             shared_max_port: max_port,
         })?;
+        // SAFETY: The caller supplies aligned, writable storage for one u64.
         unsafe { runtime_out.write(runtime) };
         Ok(())
     })
@@ -434,10 +435,11 @@ pub extern "C" fn kestara_runtime_poll(
         if event_out.is_null() {
             return Err("The event output pointer is null".to_owned());
         }
-        let event = runtime::poll(runtime_handle, timeout(timeout_millis)?)?;
-        let bytes = event.map_or(KestaraBytes::EMPTY, |event| {
-            KestaraBytes::owned(encode_event(event))
-        });
+        let bytes = runtime::poll(runtime_handle, timeout(timeout_millis)?)?
+            .map_or(KestaraBytes::EMPTY, |event| {
+                KestaraBytes::owned(encode_event(event))
+            });
+        // SAFETY: The caller supplies aligned, writable storage for one KestaraBytes.
         unsafe { event_out.write(bytes) };
         Ok(())
     })
@@ -462,6 +464,7 @@ pub extern "C" fn kestara_bytes_free(bytes: KestaraBytes) {
         return;
     }
     let pointer = ptr::slice_from_raw_parts_mut(bytes.data, bytes.length);
+    // SAFETY: The caller returns the original allocation and length from KestaraBytes::owned exactly once.
     unsafe { drop(Box::from_raw(pointer)) };
 }
 
@@ -632,6 +635,7 @@ fn output_string(
             return Err("The value output pointer is null".to_owned());
         }
         let value = KestaraBytes::owned(operation()?.into_bytes());
+        // SAFETY: The caller supplies aligned, writable storage for one KestaraBytes.
         unsafe { value_out.write(value) };
         Ok(())
     })
@@ -653,6 +657,7 @@ fn boundary(error_out: *mut KestaraBytes, operation: impl FnOnce() -> Result<(),
 
 fn write_error(error_out: *mut KestaraBytes, error: String) {
     if !error_out.is_null() {
+        // SAFETY: When provided, the caller supplies aligned, writable storage for one KestaraBytes.
         unsafe { error_out.write(KestaraBytes::owned(error.into_bytes())) };
     }
 }
@@ -682,5 +687,7 @@ fn input<'a>(value: *const u8, length: usize) -> Result<&'a [u8], String> {
     if value.is_null() {
         return Err("A native input pointer is null".to_owned());
     }
+    // SAFETY: The caller supplies one readable allocation of length bytes that remains live and
+    // unmodified for the borrow. Its size is at most isize::MAX bytes.
     Ok(unsafe { slice::from_raw_parts(value, length) })
 }

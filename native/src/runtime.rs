@@ -318,10 +318,18 @@ pub fn create(configuration: RuntimeConfiguration) -> Result<u64, String> {
     match ready_receiver.recv() {
         Ok(Ok(())) => {}
         Ok(Err(error)) => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The startup error already explains the failure and joining reaps the thread"
+            )]
             let _ = thread.join();
             return Err(error);
         }
         Err(error) => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The startup error already explains the failure and joining reaps the thread"
+            )]
             let _ = thread.join();
             return Err(format!(
                 "The WebRTC runtime controller stopped during startup: {error}"
@@ -430,10 +438,16 @@ pub fn wake(runtime_handle: u64) -> Result<(), String> {
 }
 
 pub fn release(runtime_handle: u64) -> Result<(), String> {
-    let controller = lock_runtimes()?.remove(&runtime_handle);
-    let Some(controller) = controller else {
+    let Some(controller) = ({
+        let mut runtimes = lock_runtimes()?;
+        runtimes.remove(&runtime_handle)
+    }) else {
         return Ok(());
     };
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "A disconnected controller already stopped receiving commands, and its thread is joined below"
+    )]
     let _ = controller.commands.send(Command::Shutdown {
         operation_handle: 0,
         timeout: Duration::from_secs(2),
@@ -470,6 +484,10 @@ fn lock_runtimes()
         .map_err(|error| format!("The WebRTC runtime registry is poisoned: {error}"))
 }
 
+#[expect(
+    clippy::significant_drop_tightening,
+    reason = "The runtime state owns resources used by dispatch and both shutdown paths"
+)]
 fn run_runtime(
     runtime_handle: u64,
     commands: &Receiver<Command>,
@@ -481,6 +499,10 @@ fn run_runtime(
     let runtime = match build_runtime(runtime_handle, configuration.worker_threads) {
         Ok(runtime) => runtime,
         Err(error) => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Startup notification is best effort if the waiting caller has disconnected"
+            )]
             let _ = ready.send(Err(error));
             return;
         }
@@ -499,6 +521,10 @@ fn run_runtime(
     }) {
         Ok(socket_mux) => socket_mux,
         Err(error) => {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "Startup notification is best effort if the waiting caller has disconnected"
+            )]
             let _ = ready.send(Err(error));
             return;
         }
@@ -509,6 +535,10 @@ fn run_runtime(
         webrtc_runtime,
         socket_mux,
     ));
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "Startup notification is best effort if the waiting caller has disconnected"
+    )]
     let _ = ready.send(Ok(()));
     let mut operations = Vec::new();
 
@@ -523,6 +553,7 @@ fn run_runtime(
             let result = runtime.block_on(async {
                 tokio::time::timeout(graceful_timeout, async {
                     for operation in &mut operations {
+                        #[expect(clippy::let_underscore_must_use, reason = "Shutdown waits for operations to stop even if a task panicked or was cancelled")]
                         let _ = operation.await;
                     }
                     state.shutdown_all().await
@@ -546,6 +577,10 @@ fn run_runtime(
     }
 
     let timeout = Duration::from_secs(2);
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "After command disconnect there is no caller for the cleanup result, and runtime shutdown still proceeds"
+    )]
     let _ = runtime.block_on(async { tokio::time::timeout(timeout, state.shutdown_all()).await });
     runtime.shutdown_timeout(timeout);
 }

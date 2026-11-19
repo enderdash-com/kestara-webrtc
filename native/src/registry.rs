@@ -148,6 +148,10 @@ impl RuntimeState {
     }
 
     pub fn send_event(&self, event: NativeEvent) {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Events are no longer needed after the receiver disconnects"
+        )]
         let _ = self.events.send(event);
     }
 
@@ -219,6 +223,7 @@ impl RuntimeState {
                 }
             }
         }
+        drop(handler);
         let peer = peer.ok_or_else(|| {
             if configuration.min_port == 0 {
                 format!(
@@ -567,11 +572,13 @@ impl RuntimeState {
             .peers
             .get(&peer_handle)
             .ok_or_else(|| format!("Unknown peer connection handle: {peer_handle}"))?;
-        Ok(PeerOperation {
+        let operation = PeerOperation {
             peer: Arc::clone(&entry.peer),
             operations: Arc::clone(&entry.operations),
             receive_queue_capacity: entry.receive_queue_capacity,
-        })
+        };
+        drop(registry);
+        Ok(operation)
     }
 
     fn get_channel(&self, channel_handle: u64) -> Result<(Arc<dyn DataChannel>, u64), String> {
@@ -580,7 +587,9 @@ impl RuntimeState {
             .channels
             .get(&channel_handle)
             .ok_or_else(|| format!("Unknown DataChannel handle: {channel_handle}"))?;
-        Ok((Arc::clone(&entry.channel), entry.peer_handle))
+        let channel = (Arc::clone(&entry.channel), entry.peer_handle);
+        drop(registry);
+        Ok(channel)
     }
 
     fn lock_registry(&self) -> Result<std::sync::MutexGuard<'_, Registry>, String> {
@@ -663,6 +672,10 @@ impl PeerConnectionEventHandler for EventHandler {
         };
         let peer_handle = self.peer_handle;
         tokio::spawn(async move {
+            #[expect(
+                clippy::let_underscore_must_use,
+                reason = "The incoming channel can race peer teardown and has no waiting caller"
+            )]
             let _ = runtime.register_channel(peer_handle, channel, true).await;
         });
     }
@@ -818,6 +831,10 @@ fn setting_engine(configuration: &PeerConfiguration) -> SettingEngine {
     let mut engine = SettingEngine::default();
     engine.set_dtls_cipher_suites(configuration.dtls.cipher_suites.clone());
     if let Some(role) = configuration.dtls.answering_role {
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Both bridges validate the role as Client or Server, which the setter accepts"
+        )]
         let _ = engine.set_answering_dtls_role(role);
     }
     engine.set_sdp_media_level_fingerprints(configuration.dtls.media_level_fingerprints);

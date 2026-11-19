@@ -107,5 +107,9 @@ pub fn poll(receiver: &Receiver<NativeEvent>, timeout: Duration) -> Option<Nativ
 }
 
 pub fn wake(sender: &Sender<NativeEvent>) {
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "A wake event is unnecessary after the receiver disconnects"
+    )]
     let _ = sender.send(NativeEvent::peer(WAKE, 0, 0));
 }
