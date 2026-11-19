@@ -148,11 +148,8 @@ impl RuntimeState {
     }
 
     pub fn send_event(&self, event: NativeEvent) {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Events are no longer needed after the receiver disconnects"
-        )]
-        let _ = self.events.send(event);
+        // Events are no longer needed after the receiver disconnects.
+        drop(self.events.send(event));
     }
 
     fn lock_certificate(&self) -> Result<std::sync::MutexGuard<'_, RTCCertificate>, String> {
@@ -173,7 +170,7 @@ impl RuntimeState {
         };
         let setting_engine = setting_engine(&configuration);
 
-        let handler = Arc::new(EventHandler {
+        let handler: Arc<dyn PeerConnectionEventHandler> = Arc::new(EventHandler {
             peer_handle: handle,
             runtime: Arc::downgrade(self),
         });
@@ -199,7 +196,7 @@ impl RuntimeState {
             let mut builder = PeerConnectionBuilder::new()
                 .with_configuration(rtc_configuration)
                 .with_setting_engine(setting_engine.clone())
-                .with_handler(handler.clone())
+                .with_handler(Arc::clone(&handler))
                 .with_runtime(Arc::clone(&self.runtime) as Arc<dyn Runtime>)
                 .with_udp_addrs(udp_addresses)
                 .with_tcp_addrs(tcp_addresses)
@@ -672,11 +669,8 @@ impl PeerConnectionEventHandler for EventHandler {
         };
         let peer_handle = self.peer_handle;
         tokio::spawn(async move {
-            #[expect(
-                clippy::let_underscore_must_use,
-                reason = "The incoming channel can race peer teardown and has no waiting caller"
-            )]
-            let _ = runtime.register_channel(peer_handle, channel, true).await;
+            // The incoming channel can race peer teardown and has no waiting caller.
+            drop(runtime.register_channel(peer_handle, channel, true).await);
         });
     }
 
@@ -831,11 +825,8 @@ fn setting_engine(configuration: &PeerConfiguration) -> SettingEngine {
     let mut engine = SettingEngine::default();
     engine.set_dtls_cipher_suites(configuration.dtls.cipher_suites.clone());
     if let Some(role) = configuration.dtls.answering_role {
-        #[expect(
-            clippy::let_underscore_must_use,
-            reason = "Both bridges validate the role as Client or Server, which the setter accepts"
-        )]
-        let _ = engine.set_answering_dtls_role(role);
+        // Both bridges validate the role as Client or Server, which the setter accepts.
+        drop(engine.set_answering_dtls_role(role));
     }
     engine.set_sdp_media_level_fingerprints(configuration.dtls.media_level_fingerprints);
     engine.set_dtls_replay_protection_window(configuration.dtls.replay_protection_window);
@@ -937,9 +928,15 @@ fn encode_stats(report: &RTCStatsReport) -> Result<Vec<u8>, String> {
 
     let channels = report
         .iter()
-        .filter_map(|entry| match entry {
-            RTCStatsReportEntry::DataChannel(channel) => Some(channel),
-            _ => None,
+        .filter_map(|entry| {
+            #[expect(
+                clippy::wildcard_enum_match_arm,
+                reason = "Only DataChannel entries are used from the external stats report"
+            )]
+            match entry {
+                RTCStatsReportEntry::DataChannel(channel) => Some(channel),
+                _ => None,
+            }
         })
         .collect::<Vec<_>>();
     write_u32(
@@ -968,14 +965,20 @@ fn candidate<'a>(report: &'a RTCStatsReport, id: &str) -> Option<&'a RTCIceCandi
     {
         return Some(candidate);
     }
-    report.iter().find_map(|entry| match entry {
-        RTCStatsReportEntry::LocalCandidate(candidate)
-        | RTCStatsReportEntry::RemoteCandidate(candidate)
-            if candidate.stats.id.ends_with(id) =>
-        {
-            Some(candidate)
+    report.iter().find_map(|entry| {
+        #[expect(
+            clippy::wildcard_enum_match_arm,
+            reason = "Only ICE candidate entries are used from the external stats report"
+        )]
+        match entry {
+            RTCStatsReportEntry::LocalCandidate(candidate)
+            | RTCStatsReportEntry::RemoteCandidate(candidate)
+                if candidate.stats.id.ends_with(id) =>
+            {
+                Some(candidate)
+            }
+            _ => None,
         }
-        _ => None,
     })
 }
 
