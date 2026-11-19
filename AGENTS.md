@@ -12,6 +12,13 @@
 - Never bypass hooks with `--no-verify`, `-n`, environment variables, or configuration changes.
 - Let the hooks finish and fix failures before committing or pushing.
 
+## Hook checks
+
+- Before committing, Lefthook checks staged whitespace. Staged Kotlin or Gradle Kotlin DSL changes trigger `./gradlew spotlessCheck`. Staged Rust changes trigger Rustfmt.
+- The commit-message hook checks the first line of each commit message. It accepts Conventional Commits and Git's merge, revert, fixup, squash, and amend subjects.
+- Before pushing Kotlin, Rust, or TOML changes, Lefthook runs `./gradlew check`, as CI does.
+- To format Kotlin code and Gradle Kotlin DSL scripts, run `./gradlew spotlessApply`.
+
 ## Commits
 
 Use Conventional Commit format: `<type>(<scope>): <description>`.

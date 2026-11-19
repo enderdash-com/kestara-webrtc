@@ -20,7 +20,7 @@ Run all checks before you open a pull request:
 ./gradlew check
 ```
 
-This command compiles the shared Kotlin API, the JVM adapter, the host Kotlin/Native target, and Rust. It runs shared integration tests, Rust tests, Rustfmt, and Clippy.
+This command compiles the shared Kotlin API, the JVM adapter, the host Kotlin/Native target, and Rust. It runs shared integration tests, Rust tests, Rustfmt, Clippy, and ktlint.
 
 For target-specific changes, compile each affected target on its matching host:
 
@@ -55,6 +55,10 @@ Keep each pull request focused on one change. Describe the behavior, the reason 
 ## Git hooks
 
 Install [Lefthook](https://lefthook.dev/install/) 1.13.6 or newer, then run `lefthook install` once per checkout.
-Commits check staged whitespace. Before pushing source or build-script changes, the hook runs `./gradlew check`.
+The pre-commit hook checks staged whitespace. Staged Rust changes trigger Rustfmt.
+Staged Kotlin or Gradle Kotlin DSL changes trigger `./gradlew spotlessCheck`.
+To format Kotlin files, run `./gradlew spotlessApply`.
+The commit-message hook checks the first line for Conventional Commits and accepts Git's merge, revert, fixup, squash, and amend subjects.
+
+Before pushing source or build-script changes, the hook runs `./gradlew check`.
 The pre-push hook compares `HEAD` with the branch's upstream. Keep the upstream set to the branch that you push.
-Rust changes also run Rustfmt before the commit.

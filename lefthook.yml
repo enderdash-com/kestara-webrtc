@@ -9,6 +9,20 @@ pre-commit:
       files: git diff --cached --name-only --diff-filter=ACMR
       run: cargo fmt --manifest-path native/Cargo.toml -- --check
 
+    kotlin-format:
+      glob: "*.{kt,kts}"
+      files: git diff --cached --name-only --diff-filter=ACMR
+      run: ./gradlew spotlessCheck
+
+commit-msg:
+  commands:
+    conventional-commit:
+      run: |
+        if ! head -n 1 "{1}" | LC_ALL=C grep -Eq '^(Merge |Revert "|fixup! |squash! |amend! |(feat|fix|docs|refactor|test|chore|ci|build|perf|style|revert)(\([A-Za-z0-9_.-]+\))?!?: [^[:space:]])'; then
+          echo 'Use a Conventional Commit subject, for example: fix(webrtc): handle closed channels' >&2
+          exit 1
+        fi
+
 pre-push:
   commands:
     verify:

@@ -14,6 +14,7 @@ plugins {
   kotlin("multiplatform") version "2.4.21"
   kotlin("plugin.serialization") version "2.4.21"
   id("com.vanniktech.maven.publish") version "0.37.0"
+  id("com.diffplug.spotless") version "8.11.0"
 }
 
 group = providers.environmentVariable("GROUP").orElse("com.enderdash").get()
@@ -21,6 +22,17 @@ version = providers.environmentVariable("VERSION").orElse("0.3.0-SNAPSHOT").get(
 
 repositories {
   mavenCentral()
+}
+
+spotless {
+  kotlin {
+    target("src/**/*.kt")
+    ktlint()
+  }
+  kotlinGradle {
+    target("*.gradle.kts")
+    ktlint()
+  }
 }
 
 val nativeHeaderDirectory = layout.projectDirectory.dir("native/include")
@@ -39,10 +51,12 @@ fun KotlinNativeTarget.configureKestaraInterop(
     workingDir(layout.projectDirectory.dir("native"))
     environment("KESTARA_LIBRARY_VERSION", project.version.toString())
     commandLine("cargo", "build", "--locked", "--release", "--target", rustTarget)
-    inputs.files(fileTree("native") {
-      include("Cargo.toml", "Cargo.lock", "include/**/*.h", "src/**/*.rs")
-      exclude("target/**")
-    })
+    inputs.files(
+      fileTree("native") {
+        include("Cargo.toml", "Cargo.lock", "include/**/*.h", "src/**/*.rs")
+        exclude("target/**")
+      },
+    )
     inputs.file(layout.projectDirectory.file("rust-toolchain.toml"))
     inputs.property("libraryVersion", project.version.toString())
     outputs.file(staticLibrary)
@@ -56,8 +70,10 @@ fun KotlinNativeTarget.configureKestaraInterop(
     definitionFile.set(layout.projectDirectory.file("src/nativeInterop/cinterop/kestara.def"))
     includeDirs(nativeHeaderDirectory)
     extraOpts(
-      "-libraryPath", targetDirectory.asFile.absolutePath,
-      "-staticLibrary", staticLibraryName,
+      "-libraryPath",
+      targetDirectory.asFile.absolutePath,
+      "-staticLibrary",
+      staticLibraryName,
     )
     tasks.named(interopProcessingTaskName).configure {
       dependsOn(buildTask)
@@ -193,14 +209,18 @@ val buildRustJvm = tasks.register<Exec>("buildRustJvm") {
   description = "Builds the Rust JNI library for the current platform."
   workingDir(layout.projectDirectory.dir("native"))
   environment("KESTARA_LIBRARY_VERSION", project.version.toString())
-  commandLine(buildList {
-    addAll(listOf("cargo", "build", "--locked", "--release"))
-    jvmRustTarget.orNull?.let { addAll(listOf("--target", it)) }
-  })
-  inputs.files(fileTree("native") {
-    include("Cargo.toml", "Cargo.lock", "include/**/*.h", "src/**/*.rs")
-    exclude("target/**")
-  })
+  commandLine(
+    buildList {
+      addAll(listOf("cargo", "build", "--locked", "--release"))
+      jvmRustTarget.orNull?.let { addAll(listOf("--target", it)) }
+    },
+  )
+  inputs.files(
+    fileTree("native") {
+      include("Cargo.toml", "Cargo.lock", "include/**/*.h", "src/**/*.rs")
+      exclude("target/**")
+    },
+  )
   inputs.file(layout.projectDirectory.file("rust-toolchain.toml"))
   inputs.property("nativeTarget", jvmRustTarget.orElse("host"))
   inputs.property("libraryVersion", project.version.toString())
@@ -210,9 +230,11 @@ val buildRustJvm = tasks.register<Exec>("buildRustJvm") {
 val prepareNativeResources = tasks.register<Sync>("prepareNativeResources") {
   dependsOn(buildRustJvm)
   from(jvmNativeLibrary)
-  into(generatedNativeResources.map {
-    it.dir("META-INF/native/$jvmNativeOs/${jvmReleaseArch.get()}")
-  })
+  into(
+    generatedNativeResources.map {
+      it.dir("META-INF/native/$jvmNativeOs/${jvmReleaseArch.get()}")
+    },
+  )
 }
 
 val verifyReleaseNativeResources = tasks.register("verifyReleaseNativeResources") {
