@@ -14,7 +14,7 @@ plugins {
   kotlin("multiplatform") version "2.4.21"
   kotlin("plugin.serialization") version "2.4.21"
   id("com.vanniktech.maven.publish") version "0.37.0"
-  id("com.diffplug.spotless") version "8.11.0"
+  id("com.diffplug.spotless") version "8.12.0"
 }
 
 group = providers.environmentVariable("GROUP").orElse("com.enderdash").get()
